@@ -1,0 +1,104 @@
+{
+  "last_node_id": 2,
+  "last_link_id": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LlamaCppLLMProviderNode",
+      "pos": [
+        50,
+        200
+      ],
+      "size": {
+        "0": 315,
+        "1": 150
+      },
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "LlamaCppLLMProviderNode"
+      },
+      "outputs": [
+        {
+          "name": "llm",
+          "type": "LLM_PROVIDER",
+          "links": [
+            1
+          ],
+          "slot_index": 0
+        }
+      ],
+      "widgets_values": [
+        "your-llm.gguf",
+        2048,
+        0,
+        ""
+      ]
+    },
+    {
+      "id": 2,
+      "type": "RealtimePipelineNode",
+      "pos": [
+        500,
+        200
+      ],
+      "size": {
+        "0": 420,
+        "1": 320
+      },
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "RealtimePipelineNode"
+      },
+      "inputs": [
+        {
+          "name": "llm",
+          "type": "LLM_PROVIDER",
+          "link": 1,
+          "slot_index": 0
+        },
+        {
+          "name": "vad",
+          "type": "VAD_PROVIDER",
+          "link": null,
+          "slot_index": 1
+        },
+        {
+          "name": "stt",
+          "type": "STT_PROVIDER",
+          "link": null,
+          "slot_index": 2
+        },
+        {
+          "name": "tts",
+          "type": "TTS_PROVIDER",
+          "link": null,
+          "slot_index": 3
+        }
+      ],
+      "widgets_values": [
+        "text-to-text",
+        "",
+        "You are a helpful assistant.",
+        0.7
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "LLM_PROVIDER"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

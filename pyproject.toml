@@ -1,0 +1,45 @@
+[project]
+name = "ComfyUI-Realtime"
+version = "0.1.0"
+description = "Build realtime services like low latency s2s for your apps with OpenAI Realtime API-compatible pipelines built on top of the ComfyUI Websocket."
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = []
+
+[project.urls]
+repository = "https://github.com/uttermyth/ComfyUI-Realtime"
+
+[project.optional-dependencies]
+# Dev/test loop only -- aiohttp, av, and pillow all ship with ComfyUI itself at runtime. These pins are for running this package's test suite standalone.
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-aiohttp>=1.0",
+    "aiohttp>=3.9",
+    "openai[realtime]>=1.50",
+    "av>=12.0",
+    "pillow>=10.0",
+]
+# Provider node dependencies
+llama-cpp = ["llama-cpp-python==0.3.30"]
+resample = ["soxr>=0.5"]
+piper = ["piper-tts>=1.4"]
+pocket-tts = ["pocket-tts>=2.1"]
+silero = ["silero-vad>=5.0"]
+whisper-cpp = ["pywhispercpp>=1.2"]
+faster-whisper = ["faster-whisper>=1.2"]
+# Default providers installed via requirements.txt -- covers a full speech-to-speech
+default = ["llama-cpp-python==0.3.30", "soxr>=0.5", "silero-vad>=5.0", "pywhispercpp>=1.2", "pocket-tts>=2.1"]
+
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["comfyui_realtime*"]
+
+[tool.comfy]
+PublisherId = "uttermyth"
+DisplayName = "ComfyUI Realtime"
+Icon = ""

@@ -1,0 +1,182 @@
+{
+  "last_node_id": 4,
+  "last_link_id": 3,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LlamaCppLLMProviderNode",
+      "pos": [
+        50,
+        100
+      ],
+      "size": {
+        "0": 315,
+        "1": 150
+      },
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "LlamaCppLLMProviderNode"
+      },
+      "outputs": [
+        {
+          "name": "llm",
+          "type": "LLM_PROVIDER",
+          "links": [
+            1
+          ],
+          "slot_index": 0
+        }
+      ],
+      "widgets_values": [
+        "your-llm.gguf",
+        2048,
+        0,
+        ""
+      ]
+    },
+    {
+      "id": 2,
+      "type": "SileroVADProviderNode",
+      "pos": [
+        50,
+        350
+      ],
+      "size": {
+        "0": 315,
+        "1": 82
+      },
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "SileroVADProviderNode"
+      },
+      "outputs": [
+        {
+          "name": "vad",
+          "type": "VAD_PROVIDER",
+          "links": [
+            2
+          ],
+          "slot_index": 0
+        }
+      ],
+      "widgets_values": [
+        0.5
+      ]
+    },
+    {
+      "id": 3,
+      "type": "WhisperCppSTTProviderNode",
+      "pos": [
+        50,
+        500
+      ],
+      "size": {
+        "0": 370,
+        "1": 82
+      },
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "WhisperCppSTTProviderNode"
+      },
+      "outputs": [
+        {
+          "name": "stt",
+          "type": "STT_PROVIDER",
+          "links": [
+            3
+          ],
+          "slot_index": 0
+        }
+      ],
+      "widgets_values": [
+        "your-whisper-model.bin"
+      ]
+    },
+    {
+      "id": 4,
+      "type": "RealtimePipelineNode",
+      "pos": [
+        550,
+        300
+      ],
+      "size": {
+        "0": 420,
+        "1": 320
+      },
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "properties": {
+        "Node name for S&R": "RealtimePipelineNode"
+      },
+      "inputs": [
+        {
+          "name": "llm",
+          "type": "LLM_PROVIDER",
+          "link": 1,
+          "slot_index": 0
+        },
+        {
+          "name": "vad",
+          "type": "VAD_PROVIDER",
+          "link": 2,
+          "slot_index": 1
+        },
+        {
+          "name": "stt",
+          "type": "STT_PROVIDER",
+          "link": 3,
+          "slot_index": 2
+        },
+        {
+          "name": "tts",
+          "type": "TTS_PROVIDER",
+          "link": null,
+          "slot_index": 3
+        }
+      ],
+      "widgets_values": [
+        "speech-to-text",
+        "",
+        "You are a helpful assistant responding in text only.",
+        0.7
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      4,
+      0,
+      "LLM_PROVIDER"
+    ],
+    [
+      2,
+      2,
+      0,
+      4,
+      1,
+      "VAD_PROVIDER"
+    ],
+    [
+      3,
+      3,
+      0,
+      4,
+      2,
+      "STT_PROVIDER"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

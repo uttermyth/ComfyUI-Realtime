@@ -1,0 +1,30 @@
+{
+  "prompt": {
+    "1": {
+      "class_type": "LlamaCppLLMProviderNode",
+      "inputs": {
+        "model_path": "models/qwen2.5-0.5b-instruct-q8_0.gguf",
+        "n_ctx": 2048,
+        "n_gpu_layers": 0,
+        "system_prompt": ""
+      }
+    },
+    "2": {
+      "class_type": "RealtimePipelineNode",
+      "inputs": {
+        "pipeline_name": "character-pirate",
+        "llm": ["1", 0],
+        "instructions": "You are a swashbuckling pirate. Speak accordingly, always in character."
+      }
+    },
+    "3": {
+      "class_type": "RealtimePipelineNode",
+      "inputs": {
+        "pipeline_name": "character-robot",
+        "llm": ["1", 0],
+        "instructions": "You are a monotone robot. Speak accordingly, always in character."
+      }
+    }
+  },
+  "client_id": "shared-model-demo"
+}

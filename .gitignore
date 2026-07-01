@@ -1,0 +1,34 @@
+# Local reference material — not part of this package's history.
+# LocalAI pin is recorded in docs/divergence-log.md, kept in the private dev archive
+# rather than this repo, instead of vendoring its source.
+ref/
+models/
+/assets/piper_voices
+/assets/pocket_tts_voices
+scripts/
+docs/
+.claude/
+.vscode/
+spec/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+build/
+*.whl
+
+# Node
+ui/node_modules/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db

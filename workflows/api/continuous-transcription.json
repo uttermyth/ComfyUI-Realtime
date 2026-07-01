@@ -1,0 +1,15 @@
+{
+  "prompt": {
+    "1": { "class_type": "SileroVADProviderNode", "inputs": { "threshold": 0.5 } },
+    "2": { "class_type": "WhisperCppSTTProviderNode", "inputs": { "model_name": "your-whisper-model.bin" } },
+    "3": {
+      "class_type": "RealtimePipelineNode",
+      "inputs": {
+        "pipeline_name": "continuous-transcription",
+        "vad": ["1", 0],
+        "stt": ["2", 0]
+      }
+    }
+  },
+  "client_id": "example-continuous-transcription"
+}

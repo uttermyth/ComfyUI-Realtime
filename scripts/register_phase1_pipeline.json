@@ -1,0 +1,31 @@
+{
+  "prompt": {
+    "1": {
+      "class_type": "LlamaCppLLMProviderNode",
+      "inputs": {
+        "model_path": "models/qwen2.5-0.5b-instruct-q8_0.gguf",
+        "n_ctx": 2048,
+        "n_gpu_layers": 0,
+        "system_prompt": "You are a terse assistant. Reply in one short sentence."
+      }
+    },
+    "2": {
+      "class_type": "PiperTTSProviderNode",
+      "inputs": {
+        "default_voice_path": "en_US/lessac/medium/en_US-lessac-medium.onnx",
+        "default_voice_id": "lessac-medium"
+      }
+    },
+    "3": {
+      "class_type": "RealtimePipelineNode",
+      "inputs": {
+        "pipeline_name": "phase1-tts",
+        "llm": ["1", 0],
+        "tts": ["2", 0],
+        "voice": "lessac-medium",
+        "temperature": 0.7
+      }
+    }
+  },
+  "client_id": "phase1-e2e-setup"
+}

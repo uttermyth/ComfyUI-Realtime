@@ -1,0 +1,30 @@
+# Developer tooling
+.claude/
+.superpowers/
+.vscode/
+
+# Internal documentation and specs
+docs/
+spec/
+
+# Tests
+tests/
+conftest.py
+pytest.ini
+
+# Development scripts and reference material
+scripts/
+ref/
+
+# UI source — dist/ is the compiled output and IS distributed
+ui/
+
+# Runtime assets users download separately
+models/
+assets/
+
+# Build artifacts
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/

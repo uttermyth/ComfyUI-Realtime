@@ -1,0 +1,13 @@
+{
+  "prompt": {
+    "1": {
+      "class_type": "EchoLLMProviderNode",
+      "inputs": { "fixed_response": "You said: " }
+    },
+    "2": {
+      "class_type": "RealtimePipelineNode",
+      "inputs": { "pipeline_name": "echo", "llm": ["1", 0] }
+    }
+  },
+  "client_id": "phase0-setup"
+}

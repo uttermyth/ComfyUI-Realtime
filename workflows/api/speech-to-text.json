@@ -1,0 +1,22 @@
+{
+  "prompt": {
+    "1": {
+      "class_type": "LlamaCppLLMProviderNode",
+      "inputs": { "model_name": "your-llm.gguf", "n_ctx": 2048, "n_gpu_layers": 0, "system_prompt": "" }
+    },
+    "2": { "class_type": "SileroVADProviderNode", "inputs": { "threshold": 0.5 } },
+    "3": { "class_type": "WhisperCppSTTProviderNode", "inputs": { "model_name": "your-whisper-model.bin" } },
+    "4": {
+      "class_type": "RealtimePipelineNode",
+      "inputs": {
+        "pipeline_name": "speech-to-text",
+        "llm": ["1", 0],
+        "vad": ["2", 0],
+        "stt": ["3", 0],
+        "instructions": "You are a helpful assistant responding in text only.",
+        "temperature": 0.7
+      }
+    }
+  },
+  "client_id": "example-speech-to-text"
+}
