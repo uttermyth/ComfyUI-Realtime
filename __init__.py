@@ -8,14 +8,7 @@ from server import PromptServer
 
 from .comfyui_realtime.nodes.dev_nodes import BusyWorkNode
 from .comfyui_realtime.nodes.pipeline_node import EchoLLMProviderNode, RealtimePipelineNode
-from .comfyui_realtime.nodes.provider_nodes import (
-    LlamaCppLLMProviderNode,
-    PiperTTSProviderNode,
-    PocketTTSProviderNode,
-    SileroVADProviderNode,
-    WhisperCppSTTProviderNode,
-    FasterWhisperSTTProviderNode,
-)
+from .comfyui_realtime.nodes import provider_nodes
 from .comfyui_realtime.server.rest_routes import (
     register_health_route,
     register_models_route,
@@ -70,12 +63,7 @@ class ComfyUIRealtimeExtension(ComfyExtension):
             EchoLLMProviderNode,
             RealtimePipelineNode,
             BusyWorkNode,
-            LlamaCppLLMProviderNode,
-            PiperTTSProviderNode,
-            PocketTTSProviderNode,
-            SileroVADProviderNode,
-            WhisperCppSTTProviderNode,
-            FasterWhisperSTTProviderNode,
+            *(getattr(provider_nodes, name) for name in provider_nodes.__all__),
         ]
 
 
