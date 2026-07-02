@@ -43,6 +43,10 @@ class TransformersLLMProviderNode(io.ComfyNode):
                 "Place model directories in ComfyUI's models/llm/transformers/ "
                 "directory. Requires a tokenizer with a chat_template -- "
                 "base/completion-only models aren't supported. "
+                "FP8-quantized checkpoints (quant_method: \"fp8\") are supported "
+                "automatically via the checkpoint's own config.json, but require a "
+                "GPU with Compute Capability >= 9 (Hopper H100 or newer, or "
+                "Blackwell) -- no separate setting needed here. "
                 "Connect the output to the llm input of Realtime Pipeline."
             ),
             inputs=[
