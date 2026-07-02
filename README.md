@@ -40,6 +40,7 @@ Install individual dependencies instead of or alongside `[default]`:
 | `faster-whisper` | `FasterWhisperSTTProviderNode` | Alternative STT — lighter on some platforms |
 | `pocket-tts` | `PocketTTSProviderNode` | Included in `[default]` |
 | `piper` | `PiperTTSProviderNode` |  GPL-3.0 licensed |
+| `transformers` | `TransformersLLMProviderNode` | Alternative LLM provider — loads HuggingFace transformers-format safetensors models instead of GGUF. Not included in `[default]` (pulls in `torch`). |
 
 
 To install individual dependencies:
@@ -47,6 +48,7 @@ To install individual dependencies:
 ```bash
 pip install ".[faster-whisper]"   # drop-in STT alternative to whisper-cpp
 pip install ".[piper]"            # TTS (GPL-3.0)
+pip install ".[transformers]"     # LLM alternative to llama.cpp -- HF safetensors models
 ```
 
 Restart ComfyUI after installing or changing anything in this package.
@@ -56,6 +58,7 @@ Restart ComfyUI after installing or changing anything in this package.
 Every model/voice file this project uses is gitignored -- none of them ship in this repo. Download what each provider you want to use needs:
 
 - **LLM** (`LlamaCppLLMProviderNode`): any GGUF-format model compatible with `llama-cpp-python`. Place in `models/llm/`.
+- **LLM** (`TransformersLLMProviderNode`): a local HuggingFace transformers-format chat model directory (`config.json` + `.safetensors` weights + tokenizer files, e.g. `google/gemma-4-12b-it`) with a tokenizer chat template. Place the whole model directory in `models/llm/transformers/<model-dir>/`.
 - **STT** (`WhisperCppSTTProviderNode`): a whisper.cpp `ggml-*.bin` model. Place in `models/stt/whisper_cpp/`.
 - **STT** (`FasterWhisperSTTProviderNode`): a CTranslate2 model directory. Place in `models/stt/faster_whisper/`.
 - **TTS** (`PiperTTSProviderNode`): a Piper voice (`.onnx` + matching `.onnx.json` config). Place in `assets/piper_voices/` or `models/tts/piper_voices/`.
@@ -67,6 +70,7 @@ Every model/voice file this project uses is gitignored -- none of them ship in t
 In ComfyUI's graph editor, wire provider nodes into a `RealtimePipelineNode`:
 
 - `LlamaCppLLMProviderNode` -> `llm` input
+- `TransformersLLMProviderNode` -> `llm` input
 - `SileroVADProviderNode` -> `vad` input
 - `WhisperCppSTTProviderNode` -> `stt` input
 - `PocketTTSProviderNode` -> `tts` input
