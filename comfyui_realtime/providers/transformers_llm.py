@@ -23,8 +23,15 @@ import threading
 from typing import AsyncIterator
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    StoppingCriteria,
+    StoppingCriteriaList,
+    TextIteratorStreamer,
+)
 
+from ..engine.executor_bridge import bridge_sync_iterator
 from .base import ChatMessage, GenerationDelta, GenerationOptions
 
 _DTYPE_MAP = {
@@ -32,6 +39,20 @@ _DTYPE_MAP = {
     "bfloat16": torch.bfloat16,
     "float32": torch.float32,
 }
+
+
+class _StopEventCriteria(StoppingCriteria):
+    """Checked by model.generate() every decode step. Wired to the same
+    stop_event bridge_sync_iterator manages, so an abandoned generate()
+    call actually halts early instead of running to completion in the
+    background -- see the module docstring for why this is necessary
+    (model.generate() is push/blocking, not pull-based like llama.cpp)."""
+
+    def __init__(self, event: threading.Event) -> None:
+        self._event = event
+
+    def __call__(self, input_ids, scores, **kwargs) -> bool:
+        return self._event.is_set()
 
 
 def _resolve_device(device: str) -> str:
@@ -99,9 +120,94 @@ class TransformersLLMProvider:
     async def generate(
         self, messages: list[ChatMessage], options: GenerationOptions
     ) -> AsyncIterator[GenerationDelta]:
-        """Streaming generation -- implemented in Task 3 (see this module's
-        docstring for why model.generate()'s push/blocking streaming needs a
-        StoppingCriteria-based cancellation design rather than llama.cpp's
-        pull-based generator)."""
-        raise NotImplementedError("TransformersLLMProvider.generate() is implemented in Task 3")
-        yield  # pragma: no cover -- unreachable; makes this an async generator function
+        chat_messages = self._build_chat_messages(messages)
+        # return_dict=True is required, not optional: apply_chat_template's
+        # return type when return_dict is omitted has drifted across
+        # transformers versions (some return a bare input_ids tensor, others
+        # a BatchEncoding) -- return_dict=True is the documented, stable way
+        # to always get a dict back. Passing attention_mask explicitly (not
+        # just input_ids) also avoids generate() having to guess it from
+        # padding, which misbehaves when pad_token == eos_token (common on
+        # chat models).
+        encoded = self._tokenizer.apply_chat_template(
+            chat_messages, add_generation_prompt=True, return_tensors="pt", return_dict=True
+        )
+        input_ids = encoded["input_ids"].to(self._device)
+        attention_mask = encoded["attention_mask"].to(self._device)
+
+        if options.temperature <= 0:
+            sampling_kwargs = {"do_sample": False}
+        else:
+            sampling_kwargs = {"do_sample": True, "temperature": options.temperature}
+        max_new_tokens = options.max_tokens or 512
+
+        stop_event = threading.Event()
+
+        def factory():
+            streamer = TextIteratorStreamer(
+                self._tokenizer, skip_prompt=True, skip_special_tokens=True
+            )
+            # model.generate() runs on a second, inner thread (TextIteratorStreamer
+            # is a producer/consumer design: generate() must run off the thread
+            # that's iterating the streamer). threading.Thread silently swallows
+            # any exception raised in its target -- without capturing it
+            # ourselves, ANY error inside generate() (OOM, a bad input, a future
+            # transformers version change) would leave the streamer with no
+            # terminating sentinel, and the `for text in streamer` loop below
+            # would hang forever with no error surfaced anywhere. generation_error
+            # captures it (write-once by this thread, read-only-after-join() by
+            # the code below -- inner_thread.join() is a memory barrier, so no
+            # lock is needed). streamer.end() in the finally unconditionally
+            # unblocks the loop -- it's the same method generate() already calls
+            # itself on its normal-completion path, so calling it a second time
+            # here is harmless (an extra, unread sentinel left in the queue after
+            # the consumer has already broken out on the first one).
+            generation_error: list[Exception] = []
+
+            def _run_generate():
+                try:
+                    self._model.generate(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        streamer=streamer,
+                        max_new_tokens=max_new_tokens,
+                        stopping_criteria=StoppingCriteriaList([_StopEventCriteria(stop_event)]),
+                        **sampling_kwargs,
+                    )
+                except Exception as exc:  # noqa: BLE001 -- forwarded below, not swallowed
+                    generation_error.append(exc)
+                finally:
+                    streamer.end()
+
+            inner_thread = threading.Thread(
+                target=_run_generate, name="transformers-generate-inner", daemon=True
+            )
+            inner_thread.start()
+            try:
+                for text in streamer:
+                    yield text
+            finally:
+                inner_thread.join()
+            # Re-raising here (inside factory(), which runs on
+            # bridge_sync_iterator's own worker thread) means this flows into
+            # that module's EXISTING `except Exception as exc: queue.put_nowait(exc)`
+            # forwarding path -- no new error-forwarding mechanism needed.
+            if generation_error:
+                raise generation_error[0]
+
+        self._lock.acquire()
+        bridge = bridge_sync_iterator(factory, stop_event)
+        try:
+            async for text in bridge:
+                yield GenerationDelta(text=text, finished=False)
+            yield GenerationDelta(text="", finished=True)
+        finally:
+            await bridge.aclose()
+            self._lock.release()
+
+    def _build_chat_messages(self, messages: list[ChatMessage]) -> list[dict]:
+        result = []
+        if self._system_prompt:
+            result.append({"role": "system", "content": self._system_prompt})
+        result.extend({"role": m.role, "content": m.content} for m in messages)
+        return result
