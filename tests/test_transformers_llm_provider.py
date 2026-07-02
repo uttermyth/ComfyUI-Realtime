@@ -2,6 +2,7 @@
 Not marked pytest.mark.integration (unlike test_llama_cpp_llm_provider.py /
 test_pocket_tts_provider.py) since this provider's fixture model is built
 from scratch locally and runs fast even on CPU."""
+import logging
 import pathlib
 import threading
 
@@ -262,3 +263,103 @@ async def test_exception_inside_generate_propagates_instead_of_hanging(tiny_mode
                 pass
     finally:
         provider.unload()
+
+
+@pytest.mark.timeout(60)
+def test_fp8_quantization_config_in_checkpoint_is_auto_detected(tmp_path_factory, caplog):
+    """Confirms the design doc's core claim for the FP8 addendum: that
+    AutoModelForCausalLM.from_pretrained() auto-detects a checkpoint's own
+    baked-in quantization_config with zero extra kwargs from
+    TransformersLLMProvider's own code. weight_block_size is set to (16, 16)
+    to match this tiny fixture's n_embd=16 -- the real-world default is
+    (128, 128), which this tiny model's dimensions can't satisfy.
+
+    ACTUAL OUTCOME OBSERVED (recorded here for Task 2, on this machine:
+    transformers 5.12.1, torch 2.12.1, CPU-only -- no CUDA, no XPU, no
+    triton, no compressed_tensors; accelerate IS installed):
+
+    from_pretrained() does NOT raise. It logs a warning via transformers'
+    own logger --
+
+        "Using FP8 quantized models requires a GPU or XPU, we will default
+        to dequantizing the model to bf16 since no GPU or XPU is available"
+
+    -- and then dequantizes on the fly. This is the FineGrainedFP8HfQuantizer
+    (transformers/quantizers/quantizer_finegrained_fp8.py)'s validate_environment():
+    for a checkpoint that is *already* pre_quantized (our case -- the
+    quantization_config comes from the checkpoint's own config.json, not
+    from an explicit kwarg), a missing/inadequate GPU never raises -- it only
+    warns once (logger.warning_once) and sets quantization_config.dequantize
+    = True. Traced through transformers/quantizers/base.py: postprocess_model()
+    then calls remove_quantization_config(), which does `del model.hf_quantizer`,
+    `del model.config.quantization_config`, `del model.quantization_method`,
+    and `model.is_quantized = False` -- by design, once a checkpoint has been
+    fully dequantized back to plain floats there is no remaining quantization
+    state to expose, so model.config.quantization_config being absent
+    afterward is NOT a silent-ignore bug (design doc's stated risk): the
+    checkpoint's quantization_config WAS read, recognized by name ("FP8"
+    appears in the warning text), and deliberately acted on -- the action
+    taken was a documented graceful CPU fallback, not silent pass-through.
+    Confirmed this is deliberate by reading the library source (see file
+    paths above), not by guessing from behavior alone.
+
+    Practical implication for Task 2: on hardware with no CUDA/XPU (this
+    dev machine, and most CI runners), loading an FP8-quantized checkpoint
+    through this provider will NOT raise -- it will silently succeed as a
+    dequantized (plain-float) model, merely emitting a transformers-internal
+    log warning our provider does not currently surface anywhere. Task 2's
+    error-wrapping code should NOT expect a catchable hardware exception for
+    this path; if surfacing this to the user matters, it would need to
+    inspect logs or model.is_quantized after load, not a try/except around
+    from_pretrained(). The `RuntimeError("No GPU or XPU found. A GPU or XPU
+    is needed for FP8 quantization.")` in the same source function only
+    fires for the non-pre_quantized (on-the-fly quantization request) case,
+    which this provider never triggers -- it always loads existing
+    checkpoints. The triton / compressed-tensors dependency question (the
+    plan's Outcome 2) could not be exercised on this CPU-only machine since
+    that code path requires an actual CUDA/XPU device to be reached first;
+    this remains unverified and would need real GPU hardware to confirm.
+    """
+    target_dir = tmp_path_factory.mktemp("tiny_fp8_model")
+    build_tiny_transformers_model_dir(
+        target_dir,
+        fp8_quantization_config={
+            "quant_method": "fp8",
+            "weight_block_size": [16, 16],
+            "activation_scheme": "dynamic",
+        },
+    )
+
+    from transformers import AutoModelForCausalLM
+
+    with caplog.at_level(logging.WARNING):
+        model = AutoModelForCausalLM.from_pretrained(str(target_dir))
+
+    try:
+        # Loading must not raise on this hardware (see docstring): confirm it
+        # didn't silently produce a model indistinguishable from an
+        # unquantized load by checking for the FP8-specific log warning that
+        # proves transformers actually recognized and acted on the
+        # checkpoint's quantization_config, rather than ignoring it outright.
+        fp8_warnings = [
+            record.message for record in caplog.records if "FP8" in record.message
+        ]
+        assert fp8_warnings, (
+            "Expected transformers to log an FP8-specific warning when loading "
+            "a pre-quantized FP8 checkpoint on hardware without CUDA/XPU (its "
+            "documented graceful-dequantize fallback). No such warning was "
+            "observed -- this means the checkpoint's quantization_config may "
+            "have been silently ignored with zero indication, which would be "
+            "the real bug the design doc's risk section warns about. If you "
+            "see this failure, stop and report back rather than proceeding "
+            "to Task 2."
+        )
+        assert "GPU or XPU" in fp8_warnings[0]
+
+        # On this graceful-dequantize path, transformers deliberately removes
+        # the quantization_config from the loaded model's config (see
+        # docstring) -- so its absence here is expected, not a bug.
+        assert getattr(model.config, "quantization_config", None) is None
+        assert getattr(model, "is_quantized", None) is not True
+    finally:
+        del model
