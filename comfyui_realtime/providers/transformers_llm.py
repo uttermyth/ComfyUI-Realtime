@@ -1,21 +1,13 @@
 """TransformersLLMProvider loads a local HuggingFace transformers-format
-chat model (config.json + .safetensors weights + tokenizer files) --
-v1 plain fp16/bf16/fp32 only, no on-the-fly quantization, no device_map
-sharding (see docs/superpowers/specs/2026-07-01-transformers-llm-provider-design.md).
+chat model (config.json + .safetensors weights + tokenizer files).
 
 Device/dtype are resolved once at construction and fixed for the life of
 this instance -- "auto" picks cuda > mps > cpu, and an explicitly-requested
 device that isn't actually available raises RuntimeError immediately
 rather than failing confusingly mid-`.to(device)`.
 
-Tokenizer must have a chat_template (checked at construction) -- v1 only
-supports instruct/chat-tuned models, not base/completion-only models.
+Tokenizer must have a chat_template (checked at construction).
 
-generate()'s streaming/cancellation design is documented in
-transformers_llm.py's generate() docstring, added in a later commit --
-see the design spec for the full reasoning (model.generate() is
-push/blocking, unlike llama.cpp's pull-based streaming, so cancellation
-needs an explicit StoppingCriteria rather than "stop calling next()").
 """
 from __future__ import annotations
 
@@ -83,18 +75,8 @@ def _resolve_dtype(torch_dtype: str, device: str) -> torch.dtype:
 def _warn_if_quantization_was_dropped(model_path: str, model) -> None:
     """transformers gracefully dequantizes a pre-quantized checkpoint (e.g.
     FP8) to full precision when no qualifying GPU/XPU is available, rather
-    than raising -- see quantizers/quantizer_finegrained_fp8.py's
-    validate_environment() and base.py's remove_quantization_config(),
-    confirmed via tests/test_transformers_llm_provider.py's
-    test_fp8_quantization_config_in_checkpoint_is_auto_detected. That's
-    silent from this provider's perspective: the in-memory model's own
-    quantization_config has already been stripped by the time
-    from_pretrained() returns, so there's nothing left on `model` itself to
-    check against -- the checkpoint's own config.json has to be read
-    directly to know it was originally declared quantized. Sub-Compute-
-    Capability-9 GPU behavior and missing-triton/compressed-tensors behavior
-    on a qualifying GPU are NOT covered by this check -- both remain
-    unverified, see the design doc addendum."""
+    than raising
+    """
     config_path = os.path.join(model_path, "config.json")
     if not os.path.isfile(config_path):
         return
@@ -134,8 +116,7 @@ class TransformersLLMProvider:
             raise ValueError(
                 f"Model at {model_path!r} has no tokenizer chat_template. "
                 "TransformersLLMProvider only supports instruct/chat-tuned models "
-                "with a chat template -- base/completion-only models aren't "
-                "supported in v1."
+                "with a chat template"
             )
 
         self._model = AutoModelForCausalLM.from_pretrained(

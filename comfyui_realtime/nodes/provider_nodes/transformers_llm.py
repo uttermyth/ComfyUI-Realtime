@@ -44,9 +44,7 @@ class TransformersLLMProviderNode(io.ComfyNode):
                 "directory. Requires a tokenizer with a chat_template -- "
                 "base/completion-only models aren't supported. "
                 "FP8-quantized checkpoints (quant_method: \"fp8\") are supported "
-                "automatically via the checkpoint's own config.json, but require a "
-                "GPU with Compute Capability >= 9 (Hopper H100 or newer, or "
-                "Blackwell) -- no separate setting needed here. "
+                "automatically via the checkpoint's own config.json, but require a qualifying GPU/XPU."
                 "Connect the output to the llm input of Realtime Pipeline."
             ),
             inputs=[
