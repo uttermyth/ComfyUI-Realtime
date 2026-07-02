@@ -100,7 +100,7 @@ class TransformersLLMProvider:
             )
 
         self._model = AutoModelForCausalLM.from_pretrained(
-            model_path, dtype=resolved_dtype, trust_remote_code=trust_remote_code
+            model_path, torch_dtype=resolved_dtype, trust_remote_code=trust_remote_code
         )
         self._model.to(resolved_device)
         self._model.eval()
