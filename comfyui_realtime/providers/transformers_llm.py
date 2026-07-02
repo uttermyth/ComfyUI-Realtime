@@ -19,6 +19,9 @@ needs an explicit StoppingCriteria rather than "stop calling next()").
 """
 from __future__ import annotations
 
+import json
+import logging
+import os
 import threading
 from typing import AsyncIterator
 
@@ -33,6 +36,8 @@ from transformers import (
 
 from ..engine.executor_bridge import bridge_sync_iterator
 from .base import ChatMessage, GenerationDelta, GenerationOptions
+
+logger = logging.getLogger("comfyui_realtime")
 
 _DTYPE_MAP = {
     "float16": torch.float16,
@@ -75,6 +80,40 @@ def _resolve_dtype(torch_dtype: str, device: str) -> torch.dtype:
     return _DTYPE_MAP[torch_dtype]
 
 
+def _warn_if_quantization_was_dropped(model_path: str, model) -> None:
+    """transformers gracefully dequantizes a pre-quantized checkpoint (e.g.
+    FP8) to full precision when no qualifying GPU/XPU is available, rather
+    than raising -- see quantizers/quantizer_finegrained_fp8.py's
+    validate_environment() and base.py's remove_quantization_config(),
+    confirmed via tests/test_transformers_llm_provider.py's
+    test_fp8_quantization_config_in_checkpoint_is_auto_detected. That's
+    silent from this provider's perspective: the in-memory model's own
+    quantization_config has already been stripped by the time
+    from_pretrained() returns, so there's nothing left on `model` itself to
+    check against -- the checkpoint's own config.json has to be read
+    directly to know it was originally declared quantized. Sub-Compute-
+    Capability-9 GPU behavior and missing-triton/compressed-tensors behavior
+    on a qualifying GPU are NOT covered by this check -- both remain
+    unverified, see the design doc addendum."""
+    config_path = os.path.join(model_path, "config.json")
+    if not os.path.isfile(config_path):
+        return
+    with open(config_path) as f:
+        declared_config = json.load(f)
+    was_declared_quantized = "quantization_config" in declared_config
+    is_actually_quantized = getattr(model, "is_quantized", False)
+    if was_declared_quantized and not is_actually_quantized:
+        logger.warning(
+            "Model at %r declares a quantization_config in its config.json but "
+            "loaded as a full-precision (dequantized) model -- this is expected "
+            "on hardware without a qualifying GPU/XPU (e.g. FP8 quantization "
+            "requires Compute Capability >= 9 / Hopper or newer). Memory usage "
+            "and generation speed will match the full-precision model size, not "
+            "the quantized size.",
+            model_path,
+        )
+
+
 class TransformersLLMProvider:
     def __init__(
         self,
@@ -102,6 +141,7 @@ class TransformersLLMProvider:
         self._model = AutoModelForCausalLM.from_pretrained(
             model_path, torch_dtype=resolved_dtype, trust_remote_code=trust_remote_code
         )
+        _warn_if_quantization_was_dropped(model_path, self._model)
         self._model.to(resolved_device)
         self._model.eval()
 

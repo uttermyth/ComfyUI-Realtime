@@ -363,3 +363,50 @@ def test_fp8_quantization_config_in_checkpoint_is_auto_detected(tmp_path_factory
         assert getattr(model, "is_quantized", None) is not True
     finally:
         del model
+
+
+def test_warns_when_fp8_checkpoint_is_silently_dequantized(tmp_path_factory, caplog):
+    """Companion to Task 1's test_fp8_quantization_config_in_checkpoint_is_auto_detected
+    -- that test confirmed the underlying transformers behavior (silent
+    dequantize-to-full-precision on hardware without a qualifying GPU/XPU,
+    with only an internal transformers log line marking it). This test
+    confirms TransformersLLMProvider itself surfaces a clear, provider-level
+    warning about it, instead of relying on that easily-missed internal log
+    line as the only trace."""
+    target_dir = tmp_path_factory.mktemp("tiny_fp8_model_for_warning_test")
+    build_tiny_transformers_model_dir(
+        target_dir,
+        fp8_quantization_config={
+            "quant_method": "fp8",
+            "weight_block_size": [16, 16],
+            "activation_scheme": "dynamic",
+        },
+    )
+
+    with caplog.at_level(logging.WARNING, logger="comfyui_realtime"):
+        provider = TransformersLLMProvider(model_path=str(target_dir), device="cpu")
+    try:
+        matching = [
+            r for r in caplog.records
+            if "quantization_config" in r.getMessage() and "dequantiz" in r.getMessage().lower()
+        ]
+        assert matching, (
+            f"expected a warning naming quantization_config + dequantization, "
+            f"got: {[r.getMessage() for r in caplog.records]}"
+        )
+    finally:
+        provider.unload()
+
+
+def test_no_warning_for_a_normal_non_quantized_model(tiny_model_dir, caplog):
+    """Regression guard: the new warning must not fire for the ordinary,
+    non-quantized fixture every other test in this file uses -- it should
+    only fire when config.json actually declared quantization_config and
+    the loaded model doesn't have it."""
+    with caplog.at_level(logging.WARNING, logger="comfyui_realtime"):
+        provider = TransformersLLMProvider(model_path=str(tiny_model_dir), device="cpu")
+    try:
+        matching = [r for r in caplog.records if "quantization_config" in r.getMessage()]
+        assert matching == []
+    finally:
+        provider.unload()
