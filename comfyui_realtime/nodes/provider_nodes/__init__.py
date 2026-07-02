@@ -22,6 +22,7 @@ _PROVIDER_MODULES = [
     ("piper_tts", "PiperTTSProviderNode"),
     ("pocket_tts", "PocketTTSProviderNode"),
     ("silero_vad", "SileroVADProviderNode"),
+    ("transformers_llm", "TransformersLLMProviderNode"),
     ("whisper_cpp_stt", "WhisperCppSTTProviderNode"),
 ]
 
