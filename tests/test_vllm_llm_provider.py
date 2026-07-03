@@ -2,6 +2,8 @@
 tests/_stub_vllm_engine.py) -- vLLM's real engine requires a CUDA GPU this
 test suite cannot assume is present. Real engine/model behavior is manual
 verification only, per the design spec's Testing Strategy section."""
+import asyncio
+
 import pytest
 
 pytest.importorskip("vllm")
@@ -183,3 +185,35 @@ async def test_generate_closes_result_generator_when_caller_stops_consuming_earl
     # VLLMProvider's generate() awaited result_generator.aclose() rather
     # than abandoning the generator (which would defer/skip that cleanup).
     assert instance.finished_request_ids == [request_id]
+
+
+async def test_two_concurrent_generate_calls_interleave_without_serializing(monkeypatch):
+    monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: True)
+    StubEngine = make_stub_engine_class(chunks=["a", "ab", "abc"], delay=0.01)
+    _patch_engine_and_tokenizer(monkeypatch, engine_class=StubEngine)
+    provider = VLLMProvider(model_path="/fake/path")
+
+    events: list[str] = []
+
+    async def consume(label: str) -> None:
+        async for delta in provider.generate(
+            [ChatMessage(role="user", content=label)], GenerationOptions()
+        ):
+            if not delta.finished:
+                events.append(label)
+
+    await asyncio.gather(consume("A"), consume("B"))
+
+    assert events.count("A") == 3
+    assert events.count("B") == 3
+    # If generate() serialized (e.g. behind a threading.Lock, like
+    # LlamaCppLLMProvider/TransformersLLMProvider), every "A" event would
+    # appear before any "B" event (or vice versa) -- one call would run to
+    # completion before the other started at all. Asserting that A started
+    # before B's LAST event, and B started before A's LAST event, proves
+    # both requests were genuinely in flight on the stub engine at the same
+    # time, not queued behind each other.
+    first_a, last_a = events.index("A"), len(events) - 1 - events[::-1].index("A")
+    first_b, last_b = events.index("B"), len(events) - 1 - events[::-1].index("B")
+    assert first_a < last_b
+    assert first_b < last_a
