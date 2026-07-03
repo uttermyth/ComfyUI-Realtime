@@ -60,11 +60,20 @@ def make_stub_engine_class(chunks: list[str] | None = None, delay: float = 0.0) 
             self.generate_calls: list[tuple[str, object, str]] = []
             self.consumed_chunk_counts: dict[str, int] = {}
             self.finished_request_ids: list[str] = []
+            self.shutdown_call_count = 0
             _StubAsyncLLMEngine.instances.append(self)
 
         @classmethod
         def from_engine_args(cls, engine_args):
             return cls(engine_args)
+
+        def shutdown(self) -> None:
+            # Mirrors the best-effort shutdown() method some vLLM
+            # AsyncLLMEngine versions expose -- VLLMProvider.unload() calls
+            # this (if present) before dropping its engine reference, so
+            # tests can assert it was actually invoked rather than just
+            # trusting the reference got nulled out.
+            self.shutdown_call_count += 1
 
         async def generate(self, prompt, sampling_params, request_id):
             self.generate_calls.append((prompt, sampling_params, request_id))

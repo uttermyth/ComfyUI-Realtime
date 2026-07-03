@@ -112,6 +112,29 @@ class VLLMProvider:
         return dataclasses.replace(engine_args_obj, **overrides)
 
     def unload(self) -> None:
+        # Best-effort AsyncLLMEngine shutdown before dropping the reference.
+        # AsyncLLMEngine runs a background engine loop (and in vLLM V1,
+        # potentially an out-of-process EngineCore holding the model's
+        # VRAM) -- simply letting Python garbage-collect self._engine does
+        # not reliably stop that loop/process, and torch.cuda.empty_cache()
+        # alone only returns already-freed allocator blocks, not VRAM a
+        # still-alive engine holds. This matters because the registry calls
+        # unload() specifically to reclaim resources when a pipeline is
+        # replaced/unregistered (see registry.py's
+        # _unload_orphaned_providers_locked) -- skipping a real shutdown
+        # would leak a full model's worth of VRAM plus background
+        # threads/processes on every pipeline swap. vLLM's shutdown/close
+        # API has moved across versions, so this tries known method names
+        # defensively (matching TransformersLLMProvider's "safe to call
+        # cleanup twice"/best-effort posture) rather than assuming one
+        # exact name; it's a deliberate no-op if the installed version
+        # exposes neither.
+        if self._engine is not None:
+            shutdown = getattr(self._engine, "shutdown", None)
+            if shutdown is None:
+                shutdown = getattr(self._engine, "shutdown_background_loop", None)
+            if shutdown is not None:
+                shutdown()
         self._engine = None
         self._tokenizer = None
         if torch.cuda.is_available():

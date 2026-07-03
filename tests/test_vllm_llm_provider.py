@@ -107,9 +107,30 @@ def test_engine_args_unknown_key_raises_value_error_with_hint(monkeypatch):
 
 def test_unload_clears_engine_and_tokenizer(monkeypatch):
     monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: True)
-    _patch_engine_and_tokenizer(monkeypatch)
+    StubEngine = make_stub_engine_class()
+    _patch_engine_and_tokenizer(monkeypatch, engine_class=StubEngine)
     provider = VLLMProvider(model_path="/fake/path")
+    (instance,) = StubEngine.instances
+
     provider.unload()
+
+    assert instance.shutdown_call_count == 1
+    assert provider._engine is None
+    assert provider._tokenizer is None
+
+
+def test_unload_is_safe_when_engine_has_no_shutdown_method(monkeypatch):
+    """Some vLLM versions may not expose a shutdown()/shutdown_background_loop()
+    method at all -- unload() must not crash in that case, matching the
+    "vLLM's shutdown API has moved across versions" caveat in vllm_llm.py."""
+    monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: True)
+    StubEngine = make_stub_engine_class()
+    del StubEngine.shutdown
+    _patch_engine_and_tokenizer(monkeypatch, engine_class=StubEngine)
+    provider = VLLMProvider(model_path="/fake/path")
+
+    provider.unload()
+
     assert provider._engine is None
     assert provider._tokenizer is None
 
