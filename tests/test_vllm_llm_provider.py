@@ -110,3 +110,76 @@ def test_unload_clears_engine_and_tokenizer(monkeypatch):
     provider.unload()
     assert provider._engine is None
     assert provider._tokenizer is None
+
+
+async def test_generate_yields_incremental_deltas_then_a_finished_delta(monkeypatch):
+    monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: True)
+    StubEngine = make_stub_engine_class(chunks=["Hello", "Hello world"])
+    _patch_engine_and_tokenizer(monkeypatch, engine_class=StubEngine)
+    provider = VLLMProvider(model_path="/fake/path")
+
+    deltas = []
+    async for delta in provider.generate(
+        [ChatMessage(role="user", content="hi")], GenerationOptions(max_tokens=16)
+    ):
+        deltas.append(delta)
+
+    assert deltas[-1].finished is True
+    assert deltas[-1].text == ""
+    non_final = deltas[:-1]
+    assert [d.text for d in non_final] == ["Hello", " world"]
+    assert all(d.finished is False for d in non_final)
+
+
+async def test_generate_builds_prompt_via_apply_chat_template_with_system_prompt(monkeypatch):
+    monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: True)
+    StubEngine = make_stub_engine_class(chunks=["hi"])
+    _patch_engine_and_tokenizer(monkeypatch, engine_class=StubEngine)
+    provider = VLLMProvider(model_path="/fake/path", system_prompt="Be terse.")
+
+    async for _ in provider.generate(
+        [ChatMessage(role="user", content="hello")], GenerationOptions()
+    ):
+        pass
+
+    (instance,) = StubEngine.instances
+    (prompt, sampling_params, request_id) = instance.generate_calls[0]
+    assert prompt == "system: Be terse.\nuser: hello\nassistant:"
+    assert isinstance(request_id, str) and request_id
+
+
+async def test_generate_default_max_tokens_is_512_when_unset(monkeypatch):
+    monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: True)
+    StubEngine = make_stub_engine_class(chunks=["hi"])
+    _patch_engine_and_tokenizer(monkeypatch, engine_class=StubEngine)
+    provider = VLLMProvider(model_path="/fake/path")
+
+    async for _ in provider.generate(
+        [ChatMessage(role="user", content="hello")], GenerationOptions(max_tokens=None)
+    ):
+        pass
+
+    (instance,) = StubEngine.instances
+    (_, sampling_params, _) = instance.generate_calls[0]
+    assert sampling_params.max_tokens == 512
+
+
+async def test_generate_closes_result_generator_when_caller_stops_consuming_early(monkeypatch):
+    monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: True)
+    StubEngine = make_stub_engine_class(chunks=["a", "ab", "abc", "abcd"])
+    _patch_engine_and_tokenizer(monkeypatch, engine_class=StubEngine)
+    provider = VLLMProvider(model_path="/fake/path")
+
+    agen = provider.generate([ChatMessage(role="user", content="hi")], GenerationOptions())
+    first_delta = await agen.__anext__()
+    assert first_delta.text == "a"
+    await agen.aclose()
+
+    (instance,) = StubEngine.instances
+    (_, _, request_id) = instance.generate_calls[0]
+    # Stopped early: not all 4 scripted chunks were consumed...
+    assert instance.consumed_chunk_counts[request_id] < 4
+    # ...but the stub's own finally block still ran, proving
+    # VLLMProvider's generate() awaited result_generator.aclose() rather
+    # than abandoning the generator (which would defer/skip that cleanup).
+    assert instance.finished_request_ids == [request_id]

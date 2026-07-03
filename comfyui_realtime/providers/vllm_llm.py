@@ -27,11 +27,13 @@ from __future__ import annotations
 import dataclasses
 import difflib
 import json
+import uuid
 from typing import AsyncIterator
 
 import torch
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
+from vllm.sampling_params import SamplingParams
 from vllm.transformers_utils.tokenizer import get_tokenizer
 
 from .base import ChatMessage, GenerationDelta, GenerationOptions
@@ -114,3 +116,44 @@ class VLLMProvider:
         self._tokenizer = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    async def generate(
+        self, messages: list[ChatMessage], options: GenerationOptions
+    ) -> AsyncIterator[GenerationDelta]:
+        chat_messages = self._build_chat_messages(messages)
+        prompt_text = self._tokenizer.apply_chat_template(
+            chat_messages, tokenize=False, add_generation_prompt=True
+        )
+        sampling_params = SamplingParams(
+            temperature=options.temperature, max_tokens=options.max_tokens or 512
+        )
+        request_id = uuid.uuid4().hex
+        result_generator = self._engine.generate(prompt_text, sampling_params, request_id)
+        try:
+            generated_text = ""
+            async for output in result_generator:
+                candidate_text = output.outputs[0].text
+                delta = candidate_text.removeprefix(generated_text)
+                generated_text = candidate_text
+                if delta:
+                    yield GenerationDelta(text=delta, finished=False)
+            yield GenerationDelta(text="", finished=True)
+        finally:
+            # Closing the async generator vLLM itself returned -- rather
+            # than calling self._engine.abort(request_id) directly --
+            # delegates to vLLM's own internal abort-on-close handling
+            # (proven pattern: LocalAI's reference vLLM backend does the
+            # same thing with its own `outputs.aclose()`, not a manual
+            # abort() call). Runs on both the normal-completion path and
+            # an early-cancellation path; harmless either way, matching
+            # this codebase's other providers' "safe to call cleanup
+            # twice" pattern (e.g. TransformersLLMProvider's
+            # streamer.end()).
+            await result_generator.aclose()
+
+    def _build_chat_messages(self, messages: list[ChatMessage]) -> list[dict]:
+        result = []
+        if self._system_prompt:
+            result.append({"role": "system", "content": self._system_prompt})
+        result.extend({"role": m.role, "content": m.content} for m in messages)
+        return result
