@@ -41,7 +41,7 @@ Install individual dependencies instead of or alongside `[default]`:
 | `pocket-tts` | `PocketTTSProviderNode` | Included in `[default]` |
 | `piper` | `PiperTTSProviderNode` |  GPL-3.0 licensed |
 | `transformers` | `TransformersLLMProviderNode` | Alternative LLM provider — loads HuggingFace transformers-format safetensors models instead of GGUF. Not included in `[default]` (pulls in `torch`). |
-
+| `vllm` | `VLLMProviderNode` | Alternative LLM provider — loads the same HuggingFace transformers-format directory as `TransformersLLMProviderNode`, but via vLLM's `AsyncLLMEngine` for quantized-format coverage (NVFP4/modelopt, FP8, AWQ, GPTQ — auto-detected from the checkpoint) and continuous-batching performance. Not included in `[default]` (pulls in `vllm`/`torch`, requires a CUDA GPU). |
 
 To install individual dependencies:
 
@@ -49,6 +49,7 @@ To install individual dependencies:
 pip install ".[faster-whisper]"   # drop-in STT alternative to whisper-cpp
 pip install ".[piper]"            # TTS (GPL-3.0)
 pip install ".[transformers]"     # LLM alternative to llama.cpp -- HF safetensors models
+pip install ".[vllm]"             # LLM alternative via vLLM -- same HF safetensors models, GPU-only, quantized-format support
 ```
 
 Restart ComfyUI after installing or changing anything in this package.
@@ -59,6 +60,7 @@ Every model/voice file this project uses is gitignored -- none of them ship in t
 
 - **LLM** (`LlamaCppLLMProviderNode`): any GGUF-format model compatible with `llama-cpp-python`. Place in `models/llm/`.
 - **LLM** (`TransformersLLMProviderNode`): a local HuggingFace transformers-format chat model directory (`config.json` + `.safetensors` weights + tokenizer files) with a tokenizer chat template. Place the whole model directory in `models/llm/transformers/<model-dir>/`. FP8-quantized checkpoints (`quant_method: "fp8"`) are supported automatically via the checkpoint's own `config.json`.
+- **LLM** (`VLLMProviderNode`): the same local HuggingFace transformers-format model directory as `TransformersLLMProviderNode` — place it in `models/llm/transformers/<model-dir>/`. Requires a CUDA GPU. Quantized checkpoints (NVFP4/`modelopt`, FP8, AWQ, GPTQ) are supported automatically via the checkpoint's own `config.json`.
 - **STT** (`WhisperCppSTTProviderNode`): a whisper.cpp `ggml-*.bin` model. Place in `models/stt/whisper_cpp/`.
 - **STT** (`FasterWhisperSTTProviderNode`): a CTranslate2 model directory. Place in `models/stt/faster_whisper/`.
 - **TTS** (`PiperTTSProviderNode`): a Piper voice (`.onnx` + matching `.onnx.json` config). Place in `assets/piper_voices/` or `models/tts/piper_voices/`.
@@ -71,6 +73,7 @@ In ComfyUI's graph editor, wire provider nodes into a `RealtimePipelineNode`:
 
 - `LlamaCppLLMProviderNode` -> `llm` input
 - `TransformersLLMProviderNode` -> `llm` input
+- `VLLMProviderNode` -> `llm` input
 - `SileroVADProviderNode` -> `vad` input
 - `WhisperCppSTTProviderNode` -> `stt` input
 - `PocketTTSProviderNode` -> `tts` input
