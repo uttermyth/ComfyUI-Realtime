@@ -28,7 +28,13 @@ import torch
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
-from vllm.transformers_utils.tokenizer import get_tokenizer
+
+try:
+    # vllm >= 0.22 moved tokenizer loading out of transformers_utils and into
+    # its own top-level package.
+    from vllm.tokenizers import get_tokenizer
+except ImportError:
+    from vllm.transformers_utils.tokenizer import get_tokenizer
 
 from .base import ChatMessage, GenerationDelta, GenerationOptions
 
