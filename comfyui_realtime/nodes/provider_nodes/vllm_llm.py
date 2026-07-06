@@ -20,23 +20,16 @@ class VLLMProviderNode(io.ComfyNode):
             description=(
                 "Loads a HuggingFace transformers-format chat model (config.json + "
                 ".safetensors weights + tokenizer files) via vLLM's AsyncLLMEngine. "
-                "Shares the same models/llm/transformers/ directory as the "
-                "Transformers LLM Provider node. Requires a CUDA GPU and a "
-                "tokenizer with a chat_template. Quantized checkpoints (NVFP4/"
-                "modelopt, FP8, AWQ, GPTQ, ...) are auto-detected from the "
-                "checkpoint's own config.json -- no extra configuration needed. "
-                "Unlike the other LLM provider nodes, generate() calls on this "
-                "provider are NOT serialized -- vLLM batches concurrent requests "
-                "natively, which matters when one pipeline serves multiple "
-                "concurrent realtime sessions. "
-                "Connect the output to the llm input of Realtime Pipeline."
+                "Place model dirs in models/llm/transformers/"
+                "Requires a CUDA GPU and a tokenizer with a chat_template."
+                "Quantized checkpoints (NVFP4/modelopt, FP8, AWQ, GPTQ, ...) "
+                "are auto-detected from the checkpoint's own config.json"
             ),
             inputs=[
                 io.Combo.Input(
                     "model_name",
                     options=_list_transformer_model_dirs(),
-                    tooltip="Model directory to load, scanned from models/llm/transformers/ "
-                    "(the same directory the Transformers LLM Provider node uses).",
+                    tooltip="Model directory to load, scanned from models/llm/transformers/",
                 ),
                 io.Float.Input(
                     "gpu_memory_utilization",

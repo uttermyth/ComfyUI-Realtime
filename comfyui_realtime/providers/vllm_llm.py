@@ -7,16 +7,10 @@ no threading.Lock. AsyncLLMEngine is natively asyncio-based and performs
 its own continuous batching across concurrently-submitted requests -- and
 this pipeline genuinely produces concurrent load against one provider
 instance: every realtime session naming the same pipeline shares one
-ILLMProvider instance (see PipelineConfig.llm in registry.py), and nothing
-above the provider layer assumes single-flight per provider instance, only
-single-flight per session (enforced in server/websocket_handler.py,
-independent of the provider). See
-docs/superpowers/specs/2026-07-02-vllm-llm-provider-design.md's
-"Concurrency Model & Pipeline Verification" section for the full analysis
-this conclusion is based on.
+ILLMProvider instance and nothing above the provider layer assumes 
+single-flight per provider instance, only single-flight per session.
 
-Quantization (NVFP4/modelopt, FP8, AWQ, GPTQ, ...) is not a concept this
-provider special-cases: vLLM auto-detects quant_method from the
+vLLM auto-detects quant_method from the
 checkpoint's own config.json at engine-construction time. The
 `quantization` constructor parameter is only an explicit override for the
 rare case a caller needs to force a specific method; leaving it empty lets
@@ -54,10 +48,8 @@ class VLLMProvider:
     ) -> None:
         if not torch.cuda.is_available():
             raise RuntimeError(
-                "VLLMProvider requires a CUDA GPU (torch.cuda.is_available() is "
-                "False). vLLM's AsyncLLMEngine does not support this provider's "
-                "CPU/MPS fallback the way TransformersLLMProvider does -- use "
-                "TransformersLLMProvider or LlamaCppLLMProvider on non-CUDA hardware."
+                "VLLMProvider requires a CUDA GPU (torch.cuda.is_available() is False)."
+                "use TransformersLLMProvider or LlamaCppLLMProvider on non-CUDA hardware."
             )
 
         self._tokenizer = get_tokenizer(model_path, trust_remote_code=trust_remote_code)
@@ -88,11 +80,7 @@ class VLLMProvider:
     @staticmethod
     def _apply_engine_args_overlay(engine_args_obj, engine_args_json: str):
         """Overlays a user-supplied JSON object onto engine_args_obj via
-        dataclasses.replace -- chosen (matching LocalAI's reference vLLM
-        backend's identical _apply_engine_args helper) specifically because
-        replace() re-runs AsyncEngineArgs.__post_init__, so dict-valued
-        overrides get vLLM's own normal dataclass coercion rather than
-        being passed through as raw dicts."""
+        dataclasses.replace"""
         if not engine_args_json:
             return engine_args_obj
         try:
@@ -125,8 +113,7 @@ class VLLMProvider:
         # would leak a full model's worth of VRAM plus background
         # threads/processes on every pipeline swap. vLLM's shutdown/close
         # API has moved across versions, so this tries known method names
-        # defensively (matching TransformersLLMProvider's "safe to call
-        # cleanup twice"/best-effort posture) rather than assuming one
+        # defensively rather than assuming one
         # exact name; it's a deliberate no-op if the installed version
         # exposes neither.
         if self._engine is not None:
@@ -164,14 +151,9 @@ class VLLMProvider:
         finally:
             # Closing the async generator vLLM itself returned -- rather
             # than calling self._engine.abort(request_id) directly --
-            # delegates to vLLM's own internal abort-on-close handling
-            # (proven pattern: LocalAI's reference vLLM backend does the
-            # same thing with its own `outputs.aclose()`, not a manual
-            # abort() call). Runs on both the normal-completion path and
-            # an early-cancellation path; harmless either way, matching
-            # this codebase's other providers' "safe to call cleanup
-            # twice" pattern (e.g. TransformersLLMProvider's
-            # streamer.end()).
+            # delegates to vLLM's own internal abort-on-close handling.
+            # Runs on both the normal-completion path and
+            # an early-cancellation path
             await result_generator.aclose()
 
     def _build_chat_messages(self, messages: list[ChatMessage]) -> list[dict]:
