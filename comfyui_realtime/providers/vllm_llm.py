@@ -21,7 +21,7 @@ from __future__ import annotations
 import dataclasses
 import difflib
 import json
-import os
+import sys
 import uuid
 from typing import AsyncIterator
 
@@ -82,14 +82,26 @@ class VLLMProvider:
         engine_args_obj = self._apply_engine_args_overlay(engine_args_obj, engine_args)
 
         # ComfyUI has already initialized CUDA by the time this provider loads
-        # (other nodes/models on the graph), which forces vLLM's V1 engine
-        # core onto the "spawn" multiprocessing start method. Spawn re-executes
-        # ComfyUI's own main.py inside the child process to rebuild __main__,
-        # which isn't guarded for that and fails deep in its import chain.
-        # Running the engine core in-process sidesteps that re-exec entirely.
-        os.environ.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
-
-        self._engine = AsyncLLMEngine.from_engine_args(engine_args_obj)
+        # (other nodes/models on the graph), which forces vLLM's engine-core
+        # subprocess onto the "spawn" start method -- AsyncLLMEngine has no
+        # in-process client option, so this subprocess is unavoidable.
+        # CPython's multiprocessing.spawn only re-executes the host's
+        # sys.modules['__main__'] in that subprocess if __main__.__file__ is
+        # set (see get_preparation_data/prepare in multiprocessing/spawn.py);
+        # otherwise it leaves __main__ alone entirely, no error. ComfyUI's
+        # main.py isn't written to survive being re-executed that way (it
+        # fails deep in its own import chain), so __file__ is cleared for
+        # just this call to take that no-op branch, then restored.
+        main_module = sys.modules.get("__main__")
+        had_file = main_module is not None and hasattr(main_module, "__file__")
+        if had_file:
+            original_main_file = main_module.__file__
+            del main_module.__file__
+        try:
+            self._engine = AsyncLLMEngine.from_engine_args(engine_args_obj)
+        finally:
+            if had_file:
+                main_module.__file__ = original_main_file
         self._system_prompt = system_prompt
 
     @staticmethod
