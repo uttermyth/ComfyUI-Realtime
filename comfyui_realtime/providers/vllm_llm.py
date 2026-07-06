@@ -21,6 +21,7 @@ from __future__ import annotations
 import dataclasses
 import difflib
 import json
+import os
 import uuid
 from typing import AsyncIterator
 
@@ -79,6 +80,14 @@ class VLLMProvider:
         if quantization:
             engine_args_obj.quantization = quantization
         engine_args_obj = self._apply_engine_args_overlay(engine_args_obj, engine_args)
+
+        # ComfyUI has already initialized CUDA by the time this provider loads
+        # (other nodes/models on the graph), which forces vLLM's V1 engine
+        # core onto the "spawn" multiprocessing start method. Spawn re-executes
+        # ComfyUI's own main.py inside the child process to rebuild __main__,
+        # which isn't guarded for that and fails deep in its import chain.
+        # Running the engine core in-process sidesteps that re-exec entirely.
+        os.environ.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
 
         self._engine = AsyncLLMEngine.from_engine_args(engine_args_obj)
         self._system_prompt = system_prompt
