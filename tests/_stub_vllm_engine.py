@@ -35,6 +35,22 @@ class StubRequestOutput:
     finished: bool = False
 
 
+class StubEngineCore:
+    """Mimics vLLM's EngineCoreClient (an InprocClient in our in-process
+    setup), which lives at LLMEngine.engine_core and is the object whose
+    shutdown() actually reaches EngineCore.shutdown()'s gc.unfreeze() call
+    -- the real fix for VRAM staying pinned across model switches. Tracked
+    separately from any top-level engine.shutdown_call_count so tests can
+    assert VLLMProvider.unload() reaches this NESTED shutdown specifically,
+    not just some top-level method of the same name."""
+
+    def __init__(self) -> None:
+        self.shutdown_call_count = 0
+
+    def shutdown(self) -> None:
+        self.shutdown_call_count += 1
+
+
 class StubTokenizer:
     chat_template = (
         "{% for m in messages %}{{ m['role'] }}: {{ m['content'] }}\n{% endfor %}"
@@ -64,6 +80,15 @@ def make_stub_engine_class(chunks: list[str] | None = None, delay: float = 0.0) 
     request is still pending; .abort_request(request_id) drops a pending
     request early.
 
+    Each instance also carries a nested .engine_core (a StubEngineCore),
+    mirroring the real LLMEngine.engine_core (an EngineCoreClient) whose
+    own .shutdown() is what actually reaches EngineCore.shutdown()'s
+    gc.unfreeze() call in real vLLM -- this is the path VLLMProvider.unload()
+    must reach for VRAM to actually free. A top-level .shutdown() is also
+    kept on the instance (tracked via .shutdown_call_count) purely so tests
+    can exercise unload()'s fallback probing for other vLLM versions/client
+    shapes; the real LLMEngine has no such top-level method today.
+
     delay > 0 inserts a blocking time.sleep(delay) inside step() before it
     returns -- used by the lock-release and serialization tests (this file's
     Task 1 tests) to give a concurrently-started second generate() call a
@@ -81,7 +106,14 @@ def make_stub_engine_class(chunks: list[str] | None = None, delay: float = 0.0) 
             self.add_request_calls: list[tuple[str, object, object]] = []
             self.abort_request_calls: list[str] = []
             self.consumed_chunk_counts: dict[str, int] = {}
+            # Top-level shutdown_call_count/shutdown() below exists only to
+            # exercise unload()'s fallback path -- the real LLMEngine has
+            # neither; this stub keeps both a nested engine_core (the real
+            # shape) and a top-level shutdown() (for other vLLM
+            # versions/client types) so tests can assert which one
+            # unload() actually reaches.
             self.shutdown_call_count = 0
+            self.engine_core = StubEngineCore()
             self._next_index: dict[str, int] = {}
             _StubLLMEngine.instances.append(self)
 

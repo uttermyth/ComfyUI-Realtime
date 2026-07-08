@@ -208,12 +208,29 @@ class VLLMProvider:
         # EngineCore -- but the registry still calls unload() to reclaim a
         # loaded model's VRAM when a pipeline is replaced/unregistered (see
         # registry.py's _unload_orphaned_providers_locked), so a real
-        # shutdown attempt still matters here. vLLM's shutdown API has
-        # moved across versions, so this tries known method names
-        # defensively rather than assuming one exact name; it's a
-        # deliberate no-op if the installed version exposes neither.
+        # shutdown attempt still matters here.
+        #
+        # The real shutdown path is one level deeper than self._engine
+        # itself: LLMEngine.__init__ stores an EngineCoreClient (an
+        # InprocClient for our single-GPU in-process setup) on
+        # self._engine.engine_core, and it's THAT object's shutdown() that
+        # reaches EngineCore.shutdown() -- which calls gc.unfreeze() to undo
+        # the gc.freeze() EngineCore.__init__ does as a startup optimization.
+        # Without that gc.unfreeze(), model weights and KV-cache tensors sit
+        # in a GC generation the collector excludes from normal runs and
+        # never get freed, no matter how many empty_cache() calls follow --
+        # this is what caused VRAM to stay pinned across model switches
+        # until a full ComfyUI restart. LLMEngine itself exposes neither
+        # shutdown() nor shutdown_background_loop(), so probing only
+        # self._engine directly was always a silent no-op; try the nested
+        # engine_core.shutdown() first since it's the real, confirmed-working
+        # path for our setup, then fall back to the direct-self._engine
+        # probes for forward/backward compatibility with other vLLM versions
+        # or client types that might expose shutdown differently.
         if self._engine is not None:
-            shutdown = getattr(self._engine, "shutdown", None)
+            shutdown = getattr(getattr(self._engine, "engine_core", None), "shutdown", None)
+            if shutdown is None:
+                shutdown = getattr(self._engine, "shutdown", None)
             if shutdown is None:
                 shutdown = getattr(self._engine, "shutdown_background_loop", None)
             if shutdown is not None:

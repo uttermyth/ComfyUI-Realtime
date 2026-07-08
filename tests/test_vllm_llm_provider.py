@@ -151,12 +151,41 @@ def test_construction_forces_multiprocessing_env_var_off_and_restores_prior_valu
     assert os.environ.get("VLLM_ENABLE_V1_MULTIPROCESSING") == "1"
 
 
-def test_unload_clears_engine_and_tokenizer(monkeypatch):
+def test_unload_reaches_nested_engine_core_shutdown(monkeypatch):
+    """Real LLMEngine has neither shutdown() nor shutdown_background_loop()
+    -- the real shutdown path is the nested self._engine.engine_core.shutdown()
+    (an EngineCoreClient's shutdown, which reaches EngineCore.shutdown()'s
+    gc.unfreeze() call and is what actually frees VRAM). This is the path
+    unload() must try first, in preference to any top-level shutdown the
+    engine object might also happen to expose."""
     monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: True)
     StubEngine = make_stub_engine_class()
     _patch_engine_and_tokenizer(monkeypatch, engine_class=StubEngine)
     provider = VLLMProvider(model_path="/fake/path")
     (instance,) = StubEngine.instances
+
+    provider.unload()
+
+    assert instance.engine_core.shutdown_call_count == 1
+    # The top-level shutdown is a fallback for other vLLM versions/client
+    # shapes only -- it must not be called when the nested engine_core path
+    # (the real one, for our setup) is available.
+    assert instance.shutdown_call_count == 0
+    assert provider._engine is None
+    assert provider._tokenizer is None
+
+
+def test_unload_falls_back_to_top_level_shutdown_when_no_engine_core(monkeypatch):
+    """Real LLMEngine always has .engine_core today, so this path is never
+    hit in production -- but the fallback exists for other vLLM versions or
+    EngineCoreClient shapes that might expose shutdown directly on the
+    engine object instead. Must still work if .engine_core is absent."""
+    monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: True)
+    StubEngine = make_stub_engine_class()
+    _patch_engine_and_tokenizer(monkeypatch, engine_class=StubEngine)
+    provider = VLLMProvider(model_path="/fake/path")
+    (instance,) = StubEngine.instances
+    del instance.engine_core
 
     provider.unload()
 
@@ -166,13 +195,17 @@ def test_unload_clears_engine_and_tokenizer(monkeypatch):
 
 
 def test_unload_is_safe_when_engine_has_no_shutdown_method(monkeypatch):
-    """Some vLLM versions may not expose a shutdown()/shutdown_background_loop()
-    method at all -- unload() must not crash in that case."""
+    """Some vLLM versions/client shapes may expose neither a nested
+    engine_core.shutdown() nor a top-level shutdown()/
+    shutdown_background_loop() at all -- unload() must not crash in that
+    case."""
     monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: True)
     StubEngine = make_stub_engine_class()
     del StubEngine.shutdown
     _patch_engine_and_tokenizer(monkeypatch, engine_class=StubEngine)
     provider = VLLMProvider(model_path="/fake/path")
+    (instance,) = StubEngine.instances
+    del instance.engine_core
 
     provider.unload()
 
