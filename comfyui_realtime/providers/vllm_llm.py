@@ -201,15 +201,19 @@ class VLLMProvider:
         )
         generated_text = ""
         step_count = 0
+        finished_normally = False
         try:
             self._engine.add_request(request_id, prompt_text, sampling_params)
             while self._engine.has_unfinished_requests():
                 if stop_event.is_set():
+                    # Reachable only for cancellation that happens before this
+                    # generator has yielded its first item at all (see the
+                    # finally: block below for why this is otherwise never the
+                    # path that actually detects cancellation).
                     logger.warning(
-                        "vllm request %s: cancelled after %d steps, aborting",
-                        request_id, step_count,
+                        "vllm request %s: cancelled before first token, aborting",
+                        request_id,
                     )
-                    self._engine.abort_request(request_id)
                     return
                 for output in self._engine.step():
                     if output.request_id != request_id:
@@ -225,6 +229,7 @@ class VLLMProvider:
                             "vllm request %s: finished after %d steps",
                             request_id, step_count,
                         )
+                        finished_normally = True
                         return
         except Exception:
             # Never swallow the traceback here -- bridge_sync_iterator's
@@ -242,6 +247,27 @@ class VLLMProvider:
                 request_id, step_count, exc_info=True,
             )
             raise
+        finally:
+            # This is the ONLY reliable place to call abort_request(): once
+            # this generator has yielded at least one item, bridge_sync_iterator's
+            # worker() checks the same stop_event immediately after every yield,
+            # strictly before this generator could ever be resumed again -- so
+            # it almost always "wins" the race and abandons this generator via
+            # GeneratorExit (thrown in here deterministically by CPython's
+            # refcounting once worker()'s `for item in factory():` loop drops
+            # its last reference), before the explicit check above ever gets a
+            # second chance to run. A `finally:` block runs on that abandonment
+            # path too. Found empirically: tuning `delay` could not fix this
+            # (delay only ever helps the bridge's own check win faster), which
+            # is what proved this was structural, not a timing race to tune
+            # away.
+            if not finished_normally:
+                logger.warning(
+                    "vllm request %s: aborting after %d steps (cancelled, "
+                    "abandoned, or errored)",
+                    request_id, step_count,
+                )
+                self._engine.abort_request(request_id)
 
     async def generate(
         self, messages: list[ChatMessage], options: GenerationOptions
