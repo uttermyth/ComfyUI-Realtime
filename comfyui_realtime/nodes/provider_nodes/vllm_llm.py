@@ -84,7 +84,7 @@ class VLLMProviderNode(io.ComfyNode):
                     "engine_args",
                     multiline=True,
                     default="",
-                    tooltip="Optional JSON object overlaid onto vLLM's AsyncEngineArgs for "
+                    tooltip="Optional JSON object overlaid onto vLLM's EngineArgs for "
                     "anything not exposed above (e.g. {\"tensor_parallel_size\": 2}). Unknown "
                     "keys raise an error naming the closest valid field.",
                 ),
