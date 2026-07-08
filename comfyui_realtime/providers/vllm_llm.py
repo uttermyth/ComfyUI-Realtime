@@ -6,6 +6,16 @@ automatically because LLMEngine constructs its client with
 asyncio_mode=False) -- no EngineCore subprocess, no multiprocessing.spawn,
 no re-exec of ComfyUI's own main.py.
 
+asyncio_mode=False alone is not sufficient to get InprocClient, though:
+vLLM's VLLM_ENABLE_V1_MULTIPROCESSING environment variable defaults to
+"1", and when set, vLLM's engine construction unconditionally forces
+multiprocess_mode=True regardless of what asyncio_mode says -- silently
+handing EngineCore to a subprocess (SyncMPClient) anyway. So __init__
+force-overrides this env var to "0" for the scope of the
+LLMEngine.from_engine_args() call only, saving and restoring the prior
+value in a finally: block. This is the actual mechanism that makes
+InprocClient happen, not just cosmetic -- see __init__ for details.
+
 Like LlamaCppLLMProvider and TransformersLLMProvider, this provider now
 holds a threading.Lock -- one generate() call in flight per provider
 instance at a time. This is a deliberate regression from this provider's
@@ -58,6 +68,7 @@ import dataclasses
 import difflib
 import json
 import logging
+import os
 import threading
 import uuid
 import asyncio
@@ -79,6 +90,8 @@ from ..engine.executor_bridge import bridge_sync_iterator
 from .base import ChatMessage, GenerationDelta, GenerationOptions
 
 logger = logging.getLogger("comfyui_realtime")
+
+_MULTIPROCESSING_ENV_VAR = "VLLM_ENABLE_V1_MULTIPROCESSING"
 
 
 class VLLMProvider:
@@ -133,7 +146,36 @@ class VLLMProvider:
         # docstring and
         # docs/superpowers/specs/2026-07-08-vllm-provider-redesign-design.md
         # for the full rationale.
-        self._engine = LLMEngine.from_engine_args(engine_args_obj)
+        #
+        # asyncio_mode=False is not sufficient on its own, though:
+        # VLLM_ENABLE_V1_MULTIPROCESSING defaults to "1" and, when set,
+        # unconditionally forces multiprocess_mode=True regardless of what's
+        # passed to from_engine_args -- silently overriding asyncio_mode and
+        # handing EngineCore to a subprocess (SyncMPClient) anyway. Force it
+        # to "0" for just this construction call, then restore whatever was
+        # there before. multiprocess_mode is captured once at construction
+        # time inside LLMEngine.__init__ and never re-checked later (during
+        # step()/add_request()), so restoring the env var immediately after
+        # construction returns is correct and sufficient -- this does not
+        # need to be held for the engine's whole lifetime.
+        original_value = os.environ.get(_MULTIPROCESSING_ENV_VAR)
+        if original_value not in (None, "0"):
+            logger.warning(
+                "Overriding %s=%r to '0' for this engine's construction -- "
+                "VLLMProvider requires vLLM's EngineCore to run in-process "
+                "(InprocClient), not as a subprocess, or it re-executes "
+                "ComfyUI's own main.py under multiprocessing.spawn and crashes. "
+                "See this module's docstring.",
+                _MULTIPROCESSING_ENV_VAR, original_value,
+            )
+        os.environ[_MULTIPROCESSING_ENV_VAR] = "0"
+        try:
+            self._engine = LLMEngine.from_engine_args(engine_args_obj)
+        finally:
+            if original_value is None:
+                del os.environ[_MULTIPROCESSING_ENV_VAR]
+            else:
+                os.environ[_MULTIPROCESSING_ENV_VAR] = original_value
         self._lock = threading.Lock()
         self._system_prompt = system_prompt
 

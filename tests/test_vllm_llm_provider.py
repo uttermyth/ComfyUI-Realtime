@@ -5,6 +5,7 @@ verification only, per
 docs/superpowers/specs/2026-07-08-vllm-provider-redesign-design.md's Testing
 Strategy section."""
 import asyncio
+import os
 
 import pytest
 
@@ -105,6 +106,49 @@ def test_engine_args_unknown_key_raises_value_error_with_hint(monkeypatch):
     _patch_engine_and_tokenizer(monkeypatch)
     with pytest.raises(ValueError, match="tensor_parallel_size"):
         VLLMProvider(model_path="/fake/path", engine_args='{"tensor_paralel_size": 2}')
+
+
+def _wrap_from_engine_args_to_record_env_var(StubEngine, seen: dict):
+    """Wraps StubEngine.from_engine_args to record what
+    VLLM_ENABLE_V1_MULTIPROCESSING was set to at the moment vLLM's engine
+    construction is actually invoked -- proving VLLMProvider's override is
+    active during construction, not just before/after it."""
+    original = StubEngine.from_engine_args.__func__
+
+    @classmethod
+    def from_engine_args(cls, engine_args):
+        seen["value"] = os.environ.get("VLLM_ENABLE_V1_MULTIPROCESSING")
+        return original(cls, engine_args)
+
+    StubEngine.from_engine_args = from_engine_args
+
+
+def test_construction_forces_multiprocessing_env_var_off_and_restores_absence(monkeypatch):
+    monkeypatch.delenv("VLLM_ENABLE_V1_MULTIPROCESSING", raising=False)
+    monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: True)
+    StubEngine = make_stub_engine_class()
+    seen: dict = {}
+    _wrap_from_engine_args_to_record_env_var(StubEngine, seen)
+    _patch_engine_and_tokenizer(monkeypatch, engine_class=StubEngine)
+
+    VLLMProvider(model_path="/fake/path")
+
+    assert seen["value"] == "0"
+    assert "VLLM_ENABLE_V1_MULTIPROCESSING" not in os.environ
+
+
+def test_construction_forces_multiprocessing_env_var_off_and_restores_prior_value(monkeypatch):
+    monkeypatch.setenv("VLLM_ENABLE_V1_MULTIPROCESSING", "1")
+    monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: True)
+    StubEngine = make_stub_engine_class()
+    seen: dict = {}
+    _wrap_from_engine_args_to_record_env_var(StubEngine, seen)
+    _patch_engine_and_tokenizer(monkeypatch, engine_class=StubEngine)
+
+    VLLMProvider(model_path="/fake/path")
+
+    assert seen["value"] == "0"
+    assert os.environ.get("VLLM_ENABLE_V1_MULTIPROCESSING") == "1"
 
 
 def test_unload_clears_engine_and_tokenizer(monkeypatch):
