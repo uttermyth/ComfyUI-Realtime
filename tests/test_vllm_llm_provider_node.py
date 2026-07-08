@@ -24,7 +24,7 @@ def models_base_dir(tmp_path) -> pathlib.Path:
 
 def _patch_engine_and_tokenizer(monkeypatch):
     monkeypatch.setattr(vllm_llm_provider.torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(vllm_llm_provider, "AsyncLLMEngine", make_stub_engine_class())
+    monkeypatch.setattr(vllm_llm_provider, "LLMEngine", make_stub_engine_class())
     monkeypatch.setattr(vllm_llm_provider, "get_tokenizer", lambda *a, **k: StubTokenizer())
 
 
@@ -76,7 +76,7 @@ def test_node_execute_converts_max_model_len_zero_to_none(models_base_dir, monke
     monkeypatch.setattr(folder_paths, "get_folder_paths", lambda _key: [str(models_base_dir)])
     StubEngine = make_stub_engine_class()
     monkeypatch.setattr(vllm_llm_provider.torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(vllm_llm_provider, "AsyncLLMEngine", StubEngine)
+    monkeypatch.setattr(vllm_llm_provider, "LLMEngine", StubEngine)
     monkeypatch.setattr(vllm_llm_provider, "get_tokenizer", lambda *a, **k: StubTokenizer())
 
     VLLMProviderNode.execute(

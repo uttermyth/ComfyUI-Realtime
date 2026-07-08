@@ -19,11 +19,16 @@ class VLLMProviderNode(io.ComfyNode):
             category="Realtime/Providers",
             description=(
                 "Loads a HuggingFace transformers-format chat model (config.json + "
-                ".safetensors weights + tokenizer files) via vLLM's AsyncLLMEngine. "
+                ".safetensors weights + tokenizer files) via vLLM's synchronous "
+                "LLMEngine, running fully in-process (single GPU only, "
+                "tensor_parallel_size=1). "
                 "Place model dirs in models/llm/transformers/"
                 "Requires a CUDA GPU and a tokenizer with a chat_template."
                 "Quantized checkpoints (NVFP4/modelopt, FP8, AWQ, GPTQ, ...) "
-                "are auto-detected from the checkpoint's own config.json"
+                "are auto-detected from the checkpoint's own config.json. "
+                "Concurrent realtime sessions sharing this node's pipeline "
+                "are serialized (one generation in flight at a time), same as "
+                "the llama.cpp and transformers LLM providers."
             ),
             inputs=[
                 io.Combo.Input(
