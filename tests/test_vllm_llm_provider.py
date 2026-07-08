@@ -5,6 +5,8 @@ verification only, per
 docs/superpowers/specs/2026-07-08-vllm-provider-redesign-design.md's Testing
 Strategy section."""
 import asyncio
+import gc
+import logging
 import os
 
 import pytest
@@ -211,6 +213,60 @@ def test_unload_is_safe_when_engine_has_no_shutdown_method(monkeypatch):
 
     assert provider._engine is None
     assert provider._tokenizer is None
+
+
+def test_del_calls_unload_and_reaches_nested_engine_core_shutdown(monkeypatch):
+    """__del__ is a backstop for registry.py's lifecycle gap (see this
+    module's __del__ docstring): if the registry never calls unload()
+    explicitly, dropping the last reference to a VLLMProvider must still
+    free VRAM via the same nested engine_core.shutdown() path unload()
+    itself uses."""
+    monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: True)
+    StubEngine = make_stub_engine_class()
+    _patch_engine_and_tokenizer(monkeypatch, engine_class=StubEngine)
+    provider = VLLMProvider(model_path="/fake/path")
+    (instance,) = StubEngine.instances
+
+    del provider
+    gc.collect()
+
+    assert instance.engine_core.shutdown_call_count == 1
+
+
+def test_del_after_failed_construction_does_not_raise_attribute_error(monkeypatch, caplog):
+    """If __init__ raises partway through (here: the CUDA check), the
+    instance must still be safely collectible. self._engine/self._tokenizer
+    are set to None at the very top of __init__, before anything that can
+    raise, specifically so unload() (called from __del__) never hits an
+    AttributeError trying to read self._engine on a partially-constructed
+    instance. __del__'s own try/except would catch and merely log any such
+    AttributeError rather than let it escape as an "Exception ignored in
+    __del__" -- so the meaningful assertion here is that no such
+    AttributeError is logged at all, which is only true if the
+    attribute-ordering fix actually took effect."""
+    monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: False)
+    provider = object.__new__(VLLMProvider)
+    with pytest.raises(RuntimeError, match="CUDA"):
+        provider.__init__(model_path="/fake/path")
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="comfyui_realtime"):
+        del provider
+        gc.collect()
+
+    attribute_errors = [
+        record for record in caplog.records
+        if record.exc_info is not None and record.exc_info[0] is AttributeError
+    ]
+    assert attribute_errors == [], (
+        f"__del__ logged an AttributeError, meaning self._engine/"
+        f"self._tokenizer were not set before the CUDA check could raise: "
+        f"{attribute_errors}"
+    )
+    # With the fix applied, unload() succeeds cleanly on a never-constructed
+    # engine (self._engine is already None), so __del__ shouldn't need to
+    # log anything at all.
+    assert caplog.records == []
 
 
 async def test_generate_yields_incremental_deltas_then_a_finished_delta(monkeypatch):

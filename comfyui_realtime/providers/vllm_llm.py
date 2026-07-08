@@ -107,6 +107,14 @@ class VLLMProvider:
         engine_args: str = "",
         system_prompt: str = "",
     ) -> None:
+        # Set before anything else that could raise (the CUDA check, the
+        # chat_template check, engine construction itself) so both
+        # attributes always exist on the instance even on a partially
+        # constructed VLLMProvider -- otherwise __del__ firing on such an
+        # instance would hit AttributeError trying to read self._engine.
+        self._engine = None
+        self._tokenizer = None
+
         if not torch.cuda.is_available():
             raise RuntimeError(
                 "VLLMProvider requires a CUDA GPU (torch.cuda.is_available() is False)."
@@ -239,6 +247,26 @@ class VLLMProvider:
         self._tokenizer = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    def __del__(self) -> None:
+        # Last-resort backstop for a registry.py lifecycle gap that is NOT
+        # vLLM-specific (see docs/superpowers/specs/2026-07-08-vllm-provider-redesign-design.md's
+        # Out of Scope section): _unload_orphaned_providers_locked only calls
+        # unload() explicitly when a pipeline is re-registered under the same
+        # name AND no realtime session is connected at that moment -- if
+        # either condition fails, unload() is never invoked, full stop, no
+        # retry. register()'s dict reassignment still drops the registry's own
+        # reference to the old provider regardless, though -- so __del__ fires
+        # once this instance's last reference is actually gone (promptly via
+        # CPython's refcounting in the common no-cycle case), independent of
+        # whatever the registry decided. Best-effort, not a complete fix: no
+        # help if something else holds a reference indefinitely, and weakens to
+        # the cyclic GC's non-deterministic timing if a reference cycle ever
+        # involves this instance.
+        try:
+            self.unload()
+        except Exception:
+            logger.warning("vllm provider: exception during __del__ cleanup", exc_info=True)
 
     def _drive_to_completion(
         self,
