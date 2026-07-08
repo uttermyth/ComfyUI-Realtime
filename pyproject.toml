@@ -27,6 +27,7 @@ resample = ["soxr>=0.5"]
 piper = ["piper-tts>=1.4"]
 pocket-tts = ["pocket-tts>=2.1"]
 transformers = ["transformers>=4.45", "torch>=2.2", "accelerate>=0.30", "safetensors>=0.4"]
+# InprocClient/asyncio_mode floor spot-checked 2026-07-08 for the sync-engine redesign: EngineCoreClient.make_client()'s multiprocess_mode/asyncio_mode branching (InprocClient returned when multiprocess_mode=False, regardless of asyncio_mode) has identical signature/logic in vllm/v1/engine/core_client.py at both tag v0.8.0 and tag v0.24.0; the branching itself dates back to PR #9826 ("[V1] AsyncLLM Implementation", merged 2024-11-11), well before this floor. 0.8.0 remains sufficient -- no floor change needed.
 vllm = ["vllm>=0.8.0"]
 silero = ["silero-vad>=5.0"]
 whisper-cpp = ["pywhispercpp>=1.2"]
