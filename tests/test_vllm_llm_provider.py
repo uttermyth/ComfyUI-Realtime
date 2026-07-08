@@ -190,7 +190,7 @@ async def test_generate_default_max_tokens_is_512_when_unset(monkeypatch):
 
 async def test_generate_aborts_request_when_caller_stops_consuming_early(monkeypatch):
     monkeypatch.setattr(vllm_llm.torch.cuda, "is_available", lambda: True)
-    StubEngine = make_stub_engine_class(chunks=["a", "ab", "abc", "abcd"])
+    StubEngine = make_stub_engine_class(chunks=["a", "ab", "abc", "abcd"], delay=0.01)
     _patch_engine_and_tokenizer(monkeypatch, engine_class=StubEngine)
     provider = VLLMProvider(model_path="/fake/path")
 
