@@ -94,3 +94,14 @@ def test_node_execute_converts_max_model_len_zero_to_none(models_base_dir, monke
     (instance,) = StubEngine.instances
     default_args = type(instance.engine_args)(model=instance.engine_args.model)
     assert instance.engine_args.max_model_len == default_args.max_model_len
+
+
+def test_enforce_eager_input_defaults_to_true():
+    """Regression test: enforce_eager defaults to True due to CUDA graph capture
+    failures on ARM64+CUDA hardware (the only tested configuration)."""
+    schema = VLLMProviderNode.define_schema()
+    enforce_eager_input = next(
+        (inp for inp in schema.inputs if inp.name == "enforce_eager"), None
+    )
+    assert enforce_eager_input is not None, "enforce_eager input not found in schema"
+    assert enforce_eager_input.default is True

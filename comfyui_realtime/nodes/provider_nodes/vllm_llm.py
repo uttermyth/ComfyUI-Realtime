@@ -69,9 +69,16 @@ class VLLMProviderNode(io.ComfyNode):
                 ),
                 io.Boolean.Input(
                     "enforce_eager",
-                    default=False,
-                    tooltip="Disable CUDA graph capture. Slower steady-state generation, but "
-                    "faster/simpler engine startup -- useful for debugging.",
+                    default=True,
+                    tooltip="Disable CUDA graph capture. Defaults to True (disabled) because on "
+                    "the only hardware configuration this provider has been tested against "
+                    "(aarch64 + CUDA), leaving this False causes CUDA graph capture to fail "
+                    "during engine warmup with 'CUDA driver error: invalid argument' -- "
+                    "suspected cudaMallocAsync + CUDA graph incompatibility, root cause "
+                    "unconfirmed, possibly ARM64-specific -- crashing engine startup "
+                    "entirely. Trades some steady-state generation throughput for a "
+                    "known-working default. If your hardware doesn't hit this failure, try "
+                    "setting this to False for better throughput.",
                 ),
                 io.Boolean.Input(
                     "trust_remote_code",
