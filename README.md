@@ -13,6 +13,7 @@ Quickly wire up your own local realtime s2s service using the LLM, STT, and TTS 
 
 **Next**: 
 
+* Concurrency optimizations
 * Continue provider nodes buildout and optimizations for LLM, STT, and TTS models
 * Explore realtime s2v
 * Vision support
@@ -21,6 +22,8 @@ Quickly wire up your own local realtime s2s service using the LLM, STT, and TTS 
 
 - ComfyUI installed and runnable locally (validated on v0.22)
 - Python 3.13 (3.10+ may work but only 3.13 has been validated).
+
+Note: This custom node has been validated only on MacOS and Linux.
 
 ## Installation
 
@@ -45,14 +48,14 @@ Download the models or assets that each provider you want to use needs into the 
  
 | Provider Node | Type | Default | Dependency | Model/Asset Directory | Notes |
 |---|---|:---:|---|---|---|
-| `SileroVADProviderNode` | VAD | ✅ | `silero` | *(bundled)* | Bundles its own model, no download needed. |
-| `WhisperCppSTTProviderNode` | STT | ✅ | `whisper-cpp` | `models/stt/whisper_cpp/` | A whisper.cpp `ggml-*.bin` model. |
-| `LlamaCppLLMProviderNode` | LLM | ✅ | `llama-cpp` | `models/llm/` | Any GGUF-format model compatible with `llama-cpp-python`. |
+| `Silero VAD Provider` | VAD | ✅ | `silero` | *(bundled)* | Bundles its own model, no download needed. |
+| `WhisperCpp STT Provider` | STT | ✅ | `whisper-cpp` | `models/stt/whisper_cpp/` | A whisper.cpp `ggml-*.bin` model. |
+| `LlamaCpp LLM Provider` | LLM | ✅ | `llama-cpp` | `models/llm/gguf/` | Supports GGUF-format llm models compatible with `llama-cpp-python`. |
 | `PocketTTSProviderNode` | TTS | ✅ | `pocket-tts` | `models/tts/pocket_tts/<language>/` (model); `ComfyUI-Realtime/assets/pocket_tts_voices/` or `models/tts/pocket_tts_voices/` (voices) | Download `safetensors` and `tokenizer.model`. Voices are a local reference audio clip or a pre-exported `.safetensors` voice embedding (works with the default, non-gated weights). |
-| `FasterWhisperSTTProviderNode` | STT | | `faster-whisper` | `models/stt/faster_whisper/` | Alternative STT — lighter on some platforms. A CTranslate2 model directory. |
-| `PiperTTSProviderNode` | TTS | | `piper` | `ComfyUI-Realtime/assets/piper_voices/` or `models/tts/piper_voices/` | GPL-3.0 licensed. A Piper voice (`.onnx` + matching `.onnx.json` config). |
-| `TransformersLLMProviderNode` | LLM | | `transformers` | `models/llm/transformers/<model-dir>/` | Loads a local HuggingFace transformers-format chat model directory (`config.json` + `.safetensors` weights + tokenizer files) with a tokenizer chat template.|
-| `VLLMProviderNode` | LLM | | `vllm` | `models/llm/transformers/<model-dir>/` | Loads HuggingFace transformers-format directory via vLLM's synchronous, in-process `LLMEngine`. Supports quantized-format coverage (NVFP4/modelopt, FP8, AWQ, GPTQ — auto-detected from the checkpoint's `config.json`). Requires a CUDA GPU, single-GPU only (`tensor_parallel_size=1`). Concurrent realtime sessions sharing this node's pipeline serialize (one generation in flight at a time), same as the llama.cpp and transformers LLM providers. vLLM's FlashInfer sampling kernels JIT-compile with `nvcc` at first use. If your environment has the CUDA driver/runtime but not the full CUDA Toolkit, you'll hit `RuntimeError: Could not find nvcc`. Either install the CUDA Toolkit, or set `VLLM_USE_FLASHINFER_SAMPLER=0` in your environment to use vLLM's non-FlashInfer sampler instead. NVFP4-quantized checkpoints with tied embeddings (e.g. Gemma-family models) currently fail to load on vLLM 0.24.0: vLLM's ModelOptNvFp4 quant method doesn't implement tie_weights() -- an upstream limitation, not something this codebase can fix. Non-tied-embedding architectures, or other quantization formats, are unaffected.|
+| `Faster Whisper STT Provider` | STT | | `faster-whisper` | `models/stt/faster_whisper/` | Alternative STT — lighter on some platforms. A CTranslate2 model directory. |
+| `Piper TTS Provider` | TTS | | `piper` | `ComfyUI-Realtime/assets/piper_voices/` or `models/tts/piper_voices/` | GPL-3.0 licensed. A Piper voice (`.onnx` + matching `.onnx.json` config). |
+| `Transformers LLM Provider` | LLM | | `transformers` | `models/llm/transformers/<model-dir>/` | Loads a local HuggingFace transformers-format chat model directory (`config.json` + `.safetensors` weights + tokenizer files) with a tokenizer chat template.|
+| `vLLM LLM Provider (Beta)` | LLM | | `vllm` | `models/llm/transformers/<model-dir>/` | **Bugs and limited features in current state.** Loads HuggingFace transformers-format directory via vLLM's synchronous, in-process `LLMEngine`. Supports quantized-format coverage (NVFP4/modelopt, FP8, AWQ, GPTQ — auto-detected from the checkpoint's `config.json`). Requires a CUDA GPU, single-GPU only. vLLM's FlashInfer sampling kernels JIT-compile with `nvcc` at first use. If your environment has the CUDA driver/runtime but not the full CUDA Toolkit, you'll hit `RuntimeError: Could not find nvcc`. Either install the CUDA Toolkit, or set `VLLM_USE_FLASHINFER_SAMPLER=0` in your environment to use vLLM's non-FlashInfer sampler instead. NVFP4 support not successfully validated. |
 | *(engine-internal)* | — | ✅ | `resample` | — | `resample` isn't associated with a provider node but it is required for sample-rate conversion in the pipeline. |
 
 

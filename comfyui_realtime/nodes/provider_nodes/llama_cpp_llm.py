@@ -9,8 +9,8 @@ from ..io_types import LLMProviderType
 from ...providers.llama_cpp_llm import LlamaCppLLMProvider
 
 folder_paths.add_model_folder_path(
-    "llm",
-    os.path.join(folder_paths.models_dir, "llm"),
+    "llm-gguf",
+    os.path.join(folder_paths.models_dir, "llm", "gguf"),
 )
 
 
@@ -29,7 +29,7 @@ class LlamaCppLLMProviderNode(io.ComfyNode):
             inputs=[
                 io.Combo.Input(
                     "model_name",
-                    options=[f for f in folder_paths.get_filename_list("llm") if f.endswith(".gguf")],
+                    options=[f for f in folder_paths.get_filename_list("llm-gguf") if f.endswith(".gguf")],
                     tooltip="GGUF model file to load, scanned from models/llm/.",
                 ),
                 io.Int.Input(

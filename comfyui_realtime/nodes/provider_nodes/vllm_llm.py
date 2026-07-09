@@ -15,7 +15,7 @@ class VLLMProviderNode(io.ComfyNode):
     def define_schema(cls) -> io.Schema:
         return io.Schema(
             node_id="VLLMProviderNode",
-            display_name="vLLM LLM Provider",
+            display_name="vLLM LLM Provider (Beta)",
             category="Realtime/Providers",
             description=(
                 "Loads a HuggingFace transformers-format chat model (config.json + "
@@ -26,9 +26,7 @@ class VLLMProviderNode(io.ComfyNode):
                 "Requires a CUDA GPU and a tokenizer with a chat_template."
                 "Quantized checkpoints (NVFP4/modelopt, FP8, AWQ, GPTQ, ...) "
                 "are auto-detected from the checkpoint's own config.json. "
-                "Concurrent realtime sessions sharing this node's pipeline "
-                "are serialized (one generation in flight at a time), same as "
-                "the llama.cpp and transformers LLM providers."
+                "NVFP4 models not successfully validated."
             ),
             inputs=[
                 io.Combo.Input(
@@ -70,15 +68,8 @@ class VLLMProviderNode(io.ComfyNode):
                 io.Boolean.Input(
                     "enforce_eager",
                     default=True,
-                    tooltip="Disable CUDA graph capture. Defaults to True (disabled) because on "
-                    "the only hardware configuration this provider has been tested against "
-                    "(aarch64 + CUDA), leaving this False causes CUDA graph capture to fail "
-                    "during engine warmup with 'CUDA driver error: invalid argument' -- "
-                    "suspected cudaMallocAsync + CUDA graph incompatibility, root cause "
-                    "unconfirmed, possibly ARM64-specific -- crashing engine startup "
-                    "entirely. Trades some steady-state generation throughput for a "
-                    "known-working default. If your hardware doesn't hit this failure, try "
-                    "setting this to False for better throughput.",
+                    tooltip="Disable CUDA graph capture. Defaults to True (disabled) because"
+                    "leaving this False causes CUDA graph capture to fail (validated on aarch64 + CUDA GPU)."
                 ),
                 io.Boolean.Input(
                     "trust_remote_code",

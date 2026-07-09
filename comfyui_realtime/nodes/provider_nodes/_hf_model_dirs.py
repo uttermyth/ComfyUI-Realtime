@@ -1,8 +1,7 @@
 """Shared HuggingFace transformers-format model directory discovery, used
 by both TransformersLLMProviderNode and VLLMProviderNode -- both consume
 the same on-disk model pool (models/llm/transformers/, folder_paths key
-"llm-transformers"), a deliberate deviation from this project's usual
-"one folder_paths key per provider" convention, made to avoid duplicating
+"llm-transformers") to avoid duplicating
 large checkpoint files on disk for two providers that read the identical
 directory format (config.json + .safetensors shards + tokenizer files).
 """
@@ -15,9 +14,7 @@ import folder_paths
 
 def _list_transformer_model_dirs() -> list[str]:
     """List immediate subdirectories of every registered llm-transformers
-    base path that contain a config.json -- the directory-based equivalent
-    of LlamaCppLLMProviderNode's flat .gguf file listing (HF transformers
-    models are directories, not single files)."""
+    base path that contain a config.json."""
     names = []
     for base_dir in folder_paths.get_folder_paths("llm-transformers"):
         if not os.path.isdir(base_dir):

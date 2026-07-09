@@ -1,66 +1,24 @@
 """VLLMProvider loads a local HuggingFace transformers-format model
-directory (same on-disk shape as TransformersLLMProvider -- config.json +
-.safetensors weights + tokenizer files) via vLLM's synchronous LLMEngine,
-running fully in-process (EngineCoreClient's InprocClient, selected
-automatically because LLMEngine constructs its client with
-asyncio_mode=False) -- no EngineCore subprocess, no multiprocessing.spawn,
-no re-exec of ComfyUI's own main.py.
+directory via vLLM's synchronous LLMEngine.
 
-asyncio_mode=False alone is not sufficient to get InprocClient, though:
-vLLM's VLLM_ENABLE_V1_MULTIPROCESSING environment variable defaults to
-"1", and when set, vLLM's engine construction unconditionally forces
-multiprocess_mode=True regardless of what asyncio_mode says -- silently
-handing EngineCore to a subprocess (SyncMPClient) anyway. So __init__
-force-overrides this env var to "0" for the scope of the
-LLMEngine.from_engine_args() call only, saving and restoring the prior
-value in a finally: block. This is the actual mechanism that makes
-InprocClient happen, not just cosmetic -- see __init__ for details.
+BETA: real-hardware tested but several issues (a cross-provider lock deadlock risk, a cancellation race, a
+multiprocessing env var gotcha, VRAM not being reclaimed on unload) identified and not yet fixed.
 
-Like LlamaCppLLMProvider and TransformersLLMProvider, this provider now
-holds a threading.Lock -- one generate() call in flight per provider
-instance at a time. This is a deliberate regression from this provider's
-previous AsyncLLMEngine-based design, which held no lock and relied on
-AsyncLLMEngine's native continuous batching across concurrently-submitted
-requests from different realtime sessions sharing one provider instance
-(see registry.py's PipelineRegistry). That design hit an unresolved
-production bug: AsyncLLMEngine forces its EngineCore onto a subprocess via
-multiprocessing.spawn once CUDA is already initialized in the parent
-process (as ComfyUI's other nodes do before this provider loads), and that
-subprocess was observed to die silently in production with no traceback,
-no OOM-killer log entry, and no GPU Xid fault -- only surfacing later as
-EngineDeadError on the next request. Moving to sync LLMEngine's in-process
-InprocClient eliminates that entire bug class at the root, at the cost of
-serializing concurrent sessions against one provider instance -- see
-docs/superpowers/specs/2026-07-08-vllm-provider-redesign-design.md for the
-full design rationale, including why this regression was accepted and
-scoped as a cross-provider (not vLLM-specific) concern to revisit later.
+Getting InprocClient requires two things: asyncio_mode=False (LLMEngine's
+default) AND VLLM_ENABLE_V1_MULTIPROCESSING=0 (vLLM defaults this env var to
+"1", which silently forces a subprocess client regardless of asyncio_mode).
+__init__ overrides this env var for just the engine-construction call and
+restores it afterward.
 
-Unlike LlamaCppLLMProvider/TransformersLLMProvider, this provider's lock is
-acquired via `await asyncio.to_thread(self._lock.acquire)`, not a raw
-blocking `self._lock.acquire()` call. This is a deliberate, traced fix, not
-an inconsistency: a raw blocking acquire() directly inside an async
-function freezes the whole single-threaded event loop while contended,
-which would prevent whichever call currently holds the lock (suspended on
-its own bridge_sync_iterator queue) from ever being resumed to finish and
-release it -- a real deadlock under genuine concurrent sessions on one
-event loop, not just serialization. See
-docs/superpowers/specs/2026-07-08-vllm-provider-redesign-design.md's
-Architecture and Out of Scope sections for the full trace and its
-cross-provider blast radius (the same raw-acquire() pattern exists in
-LlamaCppLLMProvider, TransformersLLMProvider, piper_tts.py, and
-pocket_tts.py -- not fixed here, flagged as separate follow-up work).
+Unlike LlamaCppLLMProvider/TransformersLLMProvider, this provider holds a
+threading.Lock (one generate() call in flight per instance -- concurrent
+sessions serialize) acquired via asyncio.to_thread rather than a raw
+blocking acquire(), which would deadlock the event loop under real
+concurrent load.
 
-Single-GPU only: this provider assumes tensor_parallel_size=1. Multi-GPU
-via the engine_args escape hatch is unverified after this redesign -- vLLM's
-tensor-parallel worker processes are launched through a mechanism
-independent of the EngineCoreClient choice this redesign changes, and
-whether that path reintroduces the spawn/re-exec problem has not been
-checked.
-
-vLLM auto-detects quant_method from the checkpoint's own config.json at
-engine-construction time. The `quantization` constructor parameter is only
-an explicit override for the rare case a caller needs to force a specific
-method; leaving it empty lets vLLM's own detection run.
+Single-GPU only (tensor_parallel_size=1); multi-GPU is unverified.
+Quantization is auto-detected from the checkpoint's config.json --
+`quantization` is only an override for forcing a specific method.
 """
 from __future__ import annotations
 
@@ -107,11 +65,9 @@ class VLLMProvider:
         engine_args: str = "",
         system_prompt: str = "",
     ) -> None:
-        # Set before anything else that could raise (the CUDA check, the
-        # chat_template check, engine construction itself) so both
-        # attributes always exist on the instance even on a partially
-        # constructed VLLMProvider -- otherwise __del__ firing on such an
-        # instance would hit AttributeError trying to read self._engine.
+        # Set first so __del__ never hits AttributeError on a partially
+        # constructed instance (e.g. construction raising below before these
+        # are normally assigned).
         self._engine = None
         self._tokenizer = None
 
@@ -143,29 +99,10 @@ class VLLMProvider:
             engine_args_obj.quantization = quantization
         engine_args_obj = self._apply_engine_args_overlay(engine_args_obj, engine_args)
 
-        # Sync LLMEngine constructs its EngineCoreClient with
-        # asyncio_mode=False, which resolves to InprocClient -- EngineCore
-        # runs in this same process, with no subprocess, no
-        # multiprocessing.spawn, no re-exec of ComfyUI's own main.py. The
-        # AsyncLLMEngine-based version of this provider needed to
-        # temporarily clear main_module.__file__ around engine construction
-        # to survive that spawn; that workaround is gone because the
-        # subprocess it worked around no longer exists. See this module's
-        # docstring and
-        # docs/superpowers/specs/2026-07-08-vllm-provider-redesign-design.md
-        # for the full rationale.
-        #
-        # asyncio_mode=False is not sufficient on its own, though:
-        # VLLM_ENABLE_V1_MULTIPROCESSING defaults to "1" and, when set,
-        # unconditionally forces multiprocess_mode=True regardless of what's
-        # passed to from_engine_args -- silently overriding asyncio_mode and
-        # handing EngineCore to a subprocess (SyncMPClient) anyway. Force it
-        # to "0" for just this construction call, then restore whatever was
-        # there before. multiprocess_mode is captured once at construction
-        # time inside LLMEngine.__init__ and never re-checked later (during
-        # step()/add_request()), so restoring the env var immediately after
-        # construction returns is correct and sufficient -- this does not
-        # need to be held for the engine's whole lifetime.
+        # Force VLLM_ENABLE_V1_MULTIPROCESSING to "0" for just this call so
+        # LLMEngine actually resolves to InprocClient -- see module
+        # docstring. multiprocess_mode is only read at construction time, so
+        # restoring the prior value right after is safe.
         original_value = os.environ.get(_MULTIPROCESSING_ENV_VAR)
         if original_value not in (None, "0"):
             logger.warning(
@@ -210,31 +147,14 @@ class VLLMProvider:
         return dataclasses.replace(engine_args_obj, **overrides)
 
     def unload(self) -> None:
-        # Best-effort LLMEngine shutdown before dropping the reference.
-        # Unlike the old AsyncLLMEngine-based version, this engine no
-        # longer runs a background asyncio loop or an out-of-process
-        # EngineCore -- but the registry still calls unload() to reclaim a
-        # loaded model's VRAM when a pipeline is replaced/unregistered (see
-        # registry.py's _unload_orphaned_providers_locked), so a real
-        # shutdown attempt still matters here.
-        #
-        # The real shutdown path is one level deeper than self._engine
-        # itself: LLMEngine.__init__ stores an EngineCoreClient (an
-        # InprocClient for our single-GPU in-process setup) on
-        # self._engine.engine_core, and it's THAT object's shutdown() that
-        # reaches EngineCore.shutdown() -- which calls gc.unfreeze() to undo
-        # the gc.freeze() EngineCore.__init__ does as a startup optimization.
-        # Without that gc.unfreeze(), model weights and KV-cache tensors sit
-        # in a GC generation the collector excludes from normal runs and
-        # never get freed, no matter how many empty_cache() calls follow --
-        # this is what caused VRAM to stay pinned across model switches
-        # until a full ComfyUI restart. LLMEngine itself exposes neither
-        # shutdown() nor shutdown_background_loop(), so probing only
-        # self._engine directly was always a silent no-op; try the nested
-        # engine_core.shutdown() first since it's the real, confirmed-working
-        # path for our setup, then fall back to the direct-self._engine
-        # probes for forward/backward compatibility with other vLLM versions
-        # or client types that might expose shutdown differently.
+        # Best-effort shutdown before dropping the reference, so VRAM is
+        # reclaimed on model swap (registry.py calls this on pipeline
+        # replacement). The real shutdown path is self._engine.engine_core
+        # (an InprocClient), not self._engine itself -- LLMEngine has no
+        # shutdown() of its own. engine_core.shutdown() reaches vLLM's
+        # gc.unfreeze(), which is required for weights/KV-cache to become
+        # collectible at all. Falls back to older/alternate shutdown method
+        # names for compatibility with other vLLM versions or client types.
         if self._engine is not None:
             shutdown = getattr(getattr(self._engine, "engine_core", None), "shutdown", None)
             if shutdown is None:
@@ -249,20 +169,14 @@ class VLLMProvider:
             torch.cuda.empty_cache()
 
     def __del__(self) -> None:
-        # Last-resort backstop for a registry.py lifecycle gap that is NOT
-        # vLLM-specific (see docs/superpowers/specs/2026-07-08-vllm-provider-redesign-design.md's
-        # Out of Scope section): _unload_orphaned_providers_locked only calls
-        # unload() explicitly when a pipeline is re-registered under the same
-        # name AND no realtime session is connected at that moment -- if
-        # either condition fails, unload() is never invoked, full stop, no
-        # retry. register()'s dict reassignment still drops the registry's own
-        # reference to the old provider regardless, though -- so __del__ fires
-        # once this instance's last reference is actually gone (promptly via
-        # CPython's refcounting in the common no-cycle case), independent of
-        # whatever the registry decided. Best-effort, not a complete fix: no
-        # help if something else holds a reference indefinitely, and weakens to
-        # the cyclic GC's non-deterministic timing if a reference cycle ever
-        # involves this instance.
+        # Best-effort backstop: registry.py only calls unload() explicitly
+        # under specific conditions (pipeline re-registered under the same
+        # name, no active session) -- when those don't hold, this instance
+        # is simply dereferenced with no explicit cleanup. __del__ catches
+        # that case once CPython actually collects this instance. Not a
+        # complete fix (no help if a reference is held indefinitely, or
+        # under a reference cycle) -- a known cross-provider registry
+        # limitation, not vLLM-specific.
         try:
             self.unload()
         except Exception:
@@ -275,13 +189,9 @@ class VLLMProvider:
         sampling_params: SamplingParams,
         stop_event: threading.Event,
     ) -> Iterator[str]:
-        """Runs on bridge_sync_iterator's worker thread: adds one request to
-        the (single-flight, lock-protected) engine and drives it to
-        completion via a blocking step() loop, yielding incremental text
-        deltas. This is the seam a future redesign recovering cross-session
-        concurrency would replace -- see the design spec's Architecture
-        section -- without needing to change generate()'s lock/bridge/
-        GenerationDelta contract."""
+        """Runs on bridge_sync_iterator's worker thread: adds the request to
+        the engine and drives it via a blocking step() loop, yielding
+        incremental text deltas."""
         logger.debug(
             "vllm request %s: add_request, prompt length %d chars",
             request_id, len(prompt_text),
@@ -293,10 +203,9 @@ class VLLMProvider:
             self._engine.add_request(request_id, prompt_text, sampling_params)
             while self._engine.has_unfinished_requests():
                 if stop_event.is_set():
-                    # Reachable only for cancellation that happens before this
-                    # generator has yielded its first item at all (see the
-                    # finally: block below for why this is otherwise never the
-                    # path that actually detects cancellation).
+                    # Only reachable if cancelled before the first token --
+                    # once an item has been yielded, cleanup happens in the
+                    # finally: block below instead.
                     logger.warning(
                         "vllm request %s: cancelled before first token, aborting",
                         request_id,
@@ -319,35 +228,20 @@ class VLLMProvider:
                         finished_normally = True
                         return
         except Exception:
-            # Never swallow the traceback here -- bridge_sync_iterator's
-            # worker() will also forward this exception to the caller via
-            # its own queue-based mechanism, but that path only needs to
-            # carry the exception object, not print it anywhere. Logging it
-            # here, at the point it actually escapes this method, is what
-            # guarantees a real trail exists in this codebase's own logs if
-            # a hard crash follows shortly after (same posture as the
-            # already-committed d8cf5c7 fix for websocket_handler.py's
-            # task-done callback, which stopped swallowing tracebacks via
-            # %r instead of exc_info=).
+            # Log with the traceback here -- bridge_sync_iterator forwards
+            # the exception to the caller, but doesn't log it.
             logger.error(
                 "vllm request %s: unhandled exception after %d steps",
                 request_id, step_count, exc_info=True,
             )
             raise
         finally:
-            # This is the ONLY reliable place to call abort_request(): once
-            # this generator has yielded at least one item, bridge_sync_iterator's
-            # worker() checks the same stop_event immediately after every yield,
-            # strictly before this generator could ever be resumed again -- so
-            # it almost always "wins" the race and abandons this generator via
-            # GeneratorExit (thrown in here deterministically by CPython's
-            # refcounting once worker()'s `for item in factory():` loop drops
-            # its last reference), before the explicit check above ever gets a
-            # second chance to run. A `finally:` block runs on that abandonment
-            # path too. Found empirically: tuning `delay` could not fix this
-            # (delay only ever helps the bridge's own check win faster), which
-            # is what proved this was structural, not a timing race to tune
-            # away.
+            # abort_request() must live here, not in the stop_event branch
+            # above: once this generator has yielded an item,
+            # bridge_sync_iterator's own per-item stop_event check usually
+            # abandons it (via GeneratorExit) before it can be resumed to
+            # check stop_event itself. finally: runs on that path too, so
+            # it's the one reliable place to call abort_request().
             if not finished_normally:
                 logger.warning(
                     "vllm request %s: aborting after %d steps (cancelled, "
@@ -374,14 +268,9 @@ class VLLMProvider:
                 request_id, prompt_text, sampling_params, stop_event
             )
 
-        # Acquired via asyncio.to_thread rather than a raw blocking
-        # self._lock.acquire() -- see this module's docstring for why: a
-        # raw blocking acquire() here would freeze the entire event loop
-        # while contended, which would prevent the lock's current holder
-        # (another generate() call, suspended on its own
-        # bridge_sync_iterator queue) from ever being resumed to finish and
-        # release it -- a real deadlock under genuine concurrent sessions,
-        # not just serialization.
+        # asyncio.to_thread avoids a raw blocking self._lock.acquire() here,
+        # which would freeze the event loop while contended and could
+        # deadlock against another generate() call holding the lock.
         await asyncio.to_thread(self._lock.acquire)
         bridge = bridge_sync_iterator(factory, stop_event)
         try:
@@ -389,11 +278,10 @@ class VLLMProvider:
                 yield GenerationDelta(text=text, finished=False)
             yield GenerationDelta(text="", finished=True)
         finally:
-            # Explicitly await the inner generator's own aclose() so its
-            # worker-thread join (bridge_sync_iterator's finally) completes
-            # before we release the lock -- see LlamaCppLLMProvider's
-            # module docstring for why relying on the async-for's implicit
-            # teardown order is not sufficient here.
+            # Await aclose() (not just let the async-for exit) so the worker
+            # thread is actually joined before the lock releases --
+            # otherwise a second generate() could race the first call's
+            # worker thread.
             await bridge.aclose()
             self._lock.release()
 
