@@ -58,7 +58,8 @@ class LlamaCppLLMProviderNode(io.ComfyNode):
 
     @classmethod
     def execute(cls, model_name, n_ctx, n_gpu_layers, system_prompt) -> io.NodeOutput:
-        model_path = folder_paths.get_full_path_or_raise("llm/gguf", model_name)
+        base_dir = folder_paths.get_folder_paths("llm-gguf")[0]  # Get the first registered llm-gguf folder path
+        model_path = os.path.join(base_dir, model_name)
         provider = LlamaCppLLMProvider(
             model_path=model_path,
             n_ctx=n_ctx,
