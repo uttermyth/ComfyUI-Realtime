@@ -1,6 +1,6 @@
 [project]
 name = "ComfyUI-Realtime"
-version = "0.1.0"
+version = "0.1.1"
 description = "Build realtime services like low latency s2s for your apps with OpenAI Realtime API-compatible pipelines built on top of the ComfyUI Websocket."
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
