@@ -58,7 +58,7 @@ class LlamaCppLLMProviderNode(io.ComfyNode):
 
     @classmethod
     def execute(cls, model_name, n_ctx, n_gpu_layers, system_prompt) -> io.NodeOutput:
-        model_path = folder_paths.get_full_path_or_raise("llm", model_name)
+        model_path = folder_paths.get_full_path_or_raise("llm", "gguf", model_name)
         provider = LlamaCppLLMProvider(
             model_path=model_path,
             n_ctx=n_ctx,
