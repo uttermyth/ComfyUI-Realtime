@@ -7,7 +7,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.urls]
-repository = "https://github.com/uttermyth/ComfyUI-Realtime"
+Repository = "https://github.com/uttermyth/ComfyUI-Realtime"
 
 [project.optional-dependencies]
 # Dev/test loop only -- aiohttp, av, and pillow all ship with ComfyUI itself at runtime. These pins are for running this package's test suite standalone.
