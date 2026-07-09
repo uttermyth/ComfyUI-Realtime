@@ -182,7 +182,10 @@ def _start_response_task(
         if session.active_response_task is t:
             session.active_response_task = None
         if not t.cancelled() and t.exception() is not None:
-            logger.error("response.create task raised an unhandled exception: %r", t.exception())
+            logger.error(
+                "response.create task raised an unhandled exception",
+                exc_info=t.exception(),
+            )
 
     task.add_done_callback(_on_done)
     session.active_response_task = task
