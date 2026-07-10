@@ -18,6 +18,8 @@ Quickly wire up your own local realtime s2s service using the LLM, STT, and TTS 
 * Explore realtime s2v
 * Vision support
 
+![Screenshot ComfyUI](./ComfyUI-Realtime_example.jpg)
+
 ## Requirements
 
 - ComfyUI installed and runnable locally (validated on v0.22)
